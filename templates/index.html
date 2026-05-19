@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>审计文件核对工具</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1><span class="icon">&#128270;</span> 审计文件核对工具</h1>
+
+        <!-- 操作面板 -->
+        <div class="action-row">
+            <!-- 清单上传 -->
+            <div class="panel">
+                <div class="panel-title">
+                    &#128196; 需求文件清单
+                    <span class="badge" id="checklist-badge">未加载</span>
+                </div>
+                <div class="upload-area" id="upload-area">
+                    <div class="upload-icon">&#128193;</div>
+                    <p>点击或拖拽上传Excel清单文件 (.xlsx)</p>
+                </div>
+                <input type="file" id="checklist-input" accept=".xlsx" class="hidden">
+                <div id="checklist-preview" class="preview-section hidden">
+                    <div class="preview-info">
+                        <span>清单预览</span>
+                    </div>
+                    <div class="result-table-wrapper">
+                        <div class="preview-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 目标文件夹 -->
+            <div class="panel">
+                <div class="panel-title">
+                    &#128194; 客户资料文件夹
+                    <span class="badge" id="folder-badge">未扫描</span>
+                </div>
+                <div class="folder-input-group">
+                    <input type="text" id="folder-path" placeholder="请输入文件夹路径，如: D:\客户资料\2024年度">
+                    <button class="btn btn-primary" id="scan-btn">&#128270; 扫描</button>
+                </div>
+                <div id="scan-info" class="preview-info hidden"></div>
+                <div id="folder-preview" class="preview-section hidden">
+                    <div class="preview-info">
+                        <span>扫描结果</span>
+                    </div>
+                    <div class="result-table-wrapper">
+                        <div id="folder-files-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 匹配控制 + 统计 -->
+        <div class="panel" id="control-panel" class="hidden">
+            <div class="panel-title">&#9881; 匹配控制</div>
+            <div class="mode-selector">
+                <label>匹配模式:</label>
+                <select id="match-mode">
+                    <option value="fuzzy">模糊匹配（关键词包含）</option>
+                    <option value="exact">精确匹配（文件名完全一致）</option>
+                </select>
+                <button class="btn btn-success" id="match-btn">&#10003; 执行匹配</button>
+            </div>
+            <div class="progress-bar">
+                <div class="fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="stats">
+                <div class="stat-card total">
+                    <div class="stat-value" id="stat-total">0</div>
+                    <div class="stat-label">清单总数</div>
+                </div>
+                <div class="stat-card matched">
+                    <div class="stat-value" id="stat-matched">0</div>
+                    <div class="stat-label">已获取</div>
+                </div>
+                <div class="stat-card missing">
+                    <div class="stat-value" id="stat-missing">0</div>
+                    <div class="stat-label">未获取</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 结果表格 -->
+        <div class="panel hidden" id="result-section">
+            <div class="panel-title">
+                &#128203; 核对结果
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-success" id="export-btn">&#128190; 导出Excel</button>
+            </div>
+            <div class="result-table-wrapper">
+                <table class="result-table">
+                    <thead>
+                        <tr>
+                            <th>序号</th>
+                            <th>文件名称</th>
+                            <th>获取状态</th>
+                            <th>匹配文件</th>
+                            <th>备注</th>
+                        </tr>
+                    </thead>
+                    <tbody id="result-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 空状态 -->
+        <div class="empty-state" id="empty-state">
+            <div class="empty-icon">&#128194;</div>
+            <p>请先上传需求文件清单，再扫描客户资料文件夹</p>
+        </div>
+    </div>
+
+    <!-- 提示消息 -->
+    <div class="toast" id="toast"></div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
