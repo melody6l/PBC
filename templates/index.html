@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>审计文件核对工具</title>
+    <title>文件核对工具</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
     <div class="container">
-        <h1><span class="icon">&#128270;</span> 审计文件核对工具</h1>
+        <h1><span class="icon">&#128270;</span> 文件核对工具</h1>
 
         <!-- 操作面板 -->
         <div class="action-row">
@@ -23,14 +23,6 @@
                     <p>点击或拖拽上传Excel清单文件 (.xlsx)</p>
                 </div>
                 <input type="file" id="checklist-input" accept=".xlsx" class="hidden">
-                <div id="checklist-preview" class="preview-section hidden">
-                    <div class="preview-info">
-                        <span>清单预览</span>
-                    </div>
-                    <div class="result-table-wrapper">
-                        <div class="preview-content"></div>
-                    </div>
-                </div>
             </div>
 
             <!-- 目标文件夹 -->
@@ -44,19 +36,11 @@
                     <button class="btn btn-primary" id="scan-btn">&#128270; 扫描</button>
                 </div>
                 <div id="scan-info" class="preview-info hidden"></div>
-                <div id="folder-preview" class="preview-section hidden">
-                    <div class="preview-info">
-                        <span>扫描结果</span>
-                    </div>
-                    <div class="result-table-wrapper">
-                        <div id="folder-files-list"></div>
-                    </div>
-                </div>
             </div>
         </div>
 
         <!-- 匹配控制 + 统计 -->
-        <div class="panel" id="control-panel" class="hidden">
+        <div class="panel" id="control-panel">
             <div class="panel-title">&#9881; 匹配控制</div>
             <div class="mode-selector">
                 <label>匹配模式:</label>
@@ -66,10 +50,16 @@
                 </select>
                 <button class="btn btn-success" id="match-btn">&#10003; 执行匹配</button>
             </div>
+            <!-- 名称列选择（上传后显示） -->
+            <div class="name-col-selector hidden" id="name-col-selector">
+                <label>文件名称列:</label>
+                <select id="name-col-select"></select>
+                <span class="hint" id="name-col-hint"></span>
+            </div>
             <div class="progress-bar">
                 <div class="fill" id="progress-fill" style="width: 0%"></div>
             </div>
-            <div class="stats">
+            <div class="stats hidden" id="stats-section">
                 <div class="stat-card total">
                     <div class="stat-value" id="stat-total">0</div>
                     <div class="stat-label">清单总数</div>
@@ -85,26 +75,18 @@
             </div>
         </div>
 
-        <!-- 结果表格 -->
-        <div class="panel hidden" id="result-section">
+        <!-- 统一表格（清单预览 + 核对结果） -->
+        <div class="panel hidden" id="main-table-section">
             <div class="panel-title">
-                &#128203; 核对结果
+                &#128203; 文件核对清单
             </div>
             <div class="btn-group">
-                <button class="btn btn-success" id="export-btn">&#128190; 导出Excel</button>
+                <button class="btn btn-success hidden" id="export-btn">&#128190; 导出Excel</button>
             </div>
             <div class="result-table-wrapper">
-                <table class="result-table">
-                    <thead>
-                        <tr>
-                            <th>序号</th>
-                            <th>文件名称</th>
-                            <th>获取状态</th>
-                            <th>匹配文件</th>
-                            <th>备注</th>
-                        </tr>
-                    </thead>
-                    <tbody id="result-tbody"></tbody>
+                <table class="result-table" id="main-table">
+                    <thead id="main-table-head"></thead>
+                    <tbody id="main-table-body"></tbody>
                 </table>
             </div>
         </div>

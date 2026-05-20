@@ -204,10 +204,44 @@ h1 .icon { color: var(--primary-light); }
     font-family: inherit;
 }
 
+/* 名称列选择器 */
+.name-col-selector {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: rgba(52, 152, 219, 0.06);
+    border-radius: 6px;
+    border: 1px solid rgba(52, 152, 219, 0.2);
+}
+
+.name-col-selector label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.name-col-selector select {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    min-width: 180px;
+}
+
+.name-col-selector .hint {
+    font-size: 13px;
+    color: #666;
+}
+
 /* 结果表格 */
 .result-table-wrapper {
-    overflow-x: auto;
+    overflow: auto;
     margin-top: 20px;
+    max-height: 65vh;
+    position: relative;
 }
 
 .result-table {
@@ -216,13 +250,16 @@ h1 .icon { color: var(--primary-light); }
     font-size: 14px;
 }
 
-.result-table th {
+.result-table thead th {
     background: var(--primary);
     color: white;
     padding: 12px 16px;
     text-align: center;
     font-weight: 600;
     white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
 }
 
 .result-table td {
@@ -234,8 +271,13 @@ h1 .icon { color: var(--primary-light); }
 .result-table tr:hover td { background: rgba(52, 152, 219, 0.04); }
 
 .result-table .status-cell {
-    text-align: center;
-    font-weight: 600;
+    white-space: nowrap;
+}
+
+.status-cell .status-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .status-tag {
@@ -243,6 +285,7 @@ h1 .icon { color: var(--primary-light); }
     padding: 4px 12px;
     border-radius: 4px;
     font-size: 13px;
+    font-weight: 600;
 }
 
 .status-tag.yes {
@@ -276,6 +319,20 @@ h1 .icon { color: var(--primary-light); }
 
 .toggle-btn.to-yes { background: var(--success-bg); color: var(--success); }
 .toggle-btn.to-no { background: var(--danger-bg); color: var(--danger); }
+
+.type-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.type-tag.folder {
+    background: #fff3cd;
+    color: #856404;
+}
 
 /* 空状态 */
 .empty-state {

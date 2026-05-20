@@ -2,7 +2,8 @@
 
 import os
 import json
-from flask import Flask, request, jsonify, render_template, send_file
+import urllib.parse
+from flask import Flask, request, jsonify, render_template, send_file, make_response
 from matcher import match_files
 from excel_handler import read_checklist, export_results
 
@@ -14,6 +15,7 @@ os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 state = {
     "checklist": None,       # 清单数据
     "scanned_files": None,   # 扫描到的文件列表
+    "scanned_folders": None, # 扫描到的文件夹列表
     "match_results": None,   # 匹配结果
     "match_mode": "fuzzy",   # 当前匹配模式
 }
@@ -63,7 +65,13 @@ def scan_folder():
         return jsonify({"error": "文件夹路径无效"}), 400
 
     scanned_files = []
+    scanned_folders = []
     for root, dirs, files in os.walk(folder_path):
+        for d in dirs:
+            # 排除隐藏文件夹和系统文件夹
+            if not d.startswith(".") and not d.startswith("~"):
+                full_path = os.path.join(root, d)
+                scanned_folders.append(full_path)
         for f in files:
             # 排除隐藏文件和系统文件
             if not f.startswith(".") and not f.startswith("~"):
@@ -71,18 +79,20 @@ def scan_folder():
                 scanned_files.append(full_path)
 
     state["scanned_files"] = scanned_files
+    state["scanned_folders"] = scanned_folders
     # 自动执行匹配
     if state["checklist"]:
         results = match_files(
             state["checklist"]["items"],
             scanned_files,
+            scanned_folders,
             mode=state["match_mode"],
         )
         state["match_results"] = results
         matched_count = sum(1 for r in results if r["status"] == "已获取")
         return jsonify({
             "success": True,
-            "scanned_count": len(scanned_files),
+            "scanned_count": len(scanned_files) + len(scanned_folders),
             "results": results,
             "matched_count": matched_count,
             "total": len(results),
@@ -90,7 +100,7 @@ def scan_folder():
     else:
         return jsonify({
             "success": True,
-            "scanned_count": len(scanned_files),
+            "scanned_count": len(scanned_files) + len(scanned_folders),
             "results": [],
             "message": "请先上传清单文件再执行匹配",
         })
@@ -111,6 +121,7 @@ def do_match():
     results = match_files(
         state["checklist"]["items"],
         state["scanned_files"],
+        state.get("scanned_folders", []),
         mode=mode,
     )
     state["match_results"] = results
@@ -121,6 +132,47 @@ def do_match():
         "matched_count": matched_count,
         "total": len(results),
         "mode": mode,
+    })
+
+
+@app.route("/api/set-name-column", methods=["POST"])
+def set_name_column():
+    """手动设置文件名称列，重新提取匹配项并重新匹配"""
+    data = request.get_json()
+    name_col_index = data.get("name_col_index")
+
+    if not state["checklist"]:
+        return jsonify({"error": "请先上传清单文件"}), 400
+
+    # 重新提取文件名称列表
+    checklist = state["checklist"]
+    items = []
+    for row in checklist["data"]:
+        if row and len(row) > name_col_index:
+            name = row[name_col_index]
+            if name and str(name).strip():
+                items.append(str(name).strip())
+
+    checklist["name_col_index"] = name_col_index
+    checklist["items"] = items
+    state["match_results"] = None
+
+    # 如果已扫描文件夹，自动重新匹配
+    matched_count = 0
+    total = len(items)
+    results = []
+    if state["scanned_files"]:
+        results = match_files(items, state["scanned_files"], state.get("scanned_folders", []), mode=state["match_mode"])
+        state["match_results"] = results
+        matched_count = sum(1 for r in results if r["status"] == "已获取")
+
+    return jsonify({
+        "success": True,
+        "items": items,
+        "name_col_index": name_col_index,
+        "total": total,
+        "results": results,
+        "matched_count": matched_count,
     })
 
 
@@ -147,6 +199,35 @@ def update_status():
     return jsonify({"error": "未找到指定序号"}), 400
 
 
+@app.route("/api/open", methods=["GET"])
+def open_file():
+    """通过Flask中转打开本地文件或浏览文件夹"""
+    path = request.args.get("path", "")
+    path = urllib.parse.unquote(path)
+    if not path or not os.path.exists(path):
+        return jsonify({"error": "路径不存在"}), 404
+
+    if os.path.isdir(path):
+        # 文件夹：返回内容列表页面
+        items = []
+        for item in os.listdir(path):
+            if item.startswith(".") or item.startswith("~"):
+                continue
+            full = os.path.join(path, item)
+            items.append({
+                "name": item,
+                "path": full,
+                "is_dir": os.path.isdir(full),
+                "size": os.path.getsize(full) if os.path.isfile(full) else None,
+            })
+        return render_template("folder_view.html", folder_path=path, items=items)
+    else:
+        # 文件：直接提供下载/打开
+        directory = os.path.dirname(path)
+        filename = os.path.basename(path)
+        return send_file(path, as_attachment=False)
+
+
 @app.route("/api/export", methods=["GET"])
 def export_excel():
     """导出匹配结果为Excel"""
@@ -156,10 +237,11 @@ def export_excel():
     checklist = state["checklist"] or {}
     output_path = export_results(
         state["match_results"],
-        headers=checklist.get("headers"),
-        original_data=checklist.get("data"),
+        headers=checklist.get("headers", []),
+        data=checklist.get("data", []),
+        name_col_index=checklist.get("name_col_index", 0),
     )
-    return send_file(output_path, as_attachment=True, download_name="审计文件核对结果.xlsx")
+    return send_file(output_path, as_attachment=True, download_name="文件核对结果.xlsx")
 
 
 if __name__ == "__main__":
