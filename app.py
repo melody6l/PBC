@@ -6,6 +6,7 @@ import urllib.parse
 from flask import Flask, request, jsonify, render_template, send_file, make_response
 from matcher import match_files
 from excel_handler import read_checklist, export_results
+from llm_matcher import llm_match
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "uploads"
@@ -318,6 +319,87 @@ def export_excel():
         name_col_index=checklist.get("name_col_index", 0),
     )
     return send_file(output_path, as_attachment=True, download_name="文件核对结果.xlsx")
+
+
+@app.route("/api/llm-match", methods=["POST"])
+def do_llm_match():
+    """使用LLM辅助匹配未识别的清单项"""
+    import os as _os
+    config = request.get_json()
+    provider = config.get("provider", "")
+    api_key = config.get("api_key", "")
+
+    if not provider:
+        return jsonify({"error": "请选择模型"}), 400
+    if not api_key and provider != "ollama":
+        return jsonify({"error": "请输入API Key"}), 400
+    if not state["match_results"]:
+        return jsonify({"error": "请先执行规则匹配"}), 400
+
+    # 收集未匹配项
+    unmatched_items = []
+    for r in state["match_results"]:
+        if r["status"] == "未获取":
+            unmatched_items.append({"index": r["index"], "name": r["checklist_name"]})
+
+    if not unmatched_items:
+        return jsonify({"success": True, "matched_count": 0, "message": "所有项目已匹配，无需AI辅助"})
+
+    # 收集所有扫描到的文件名
+    scanned_names = []
+    if state["scanned_files"]:
+        scanned_names.extend([_os.path.basename(f) for f in state["scanned_files"]])
+    if state.get("scanned_folders"):
+        scanned_names.extend([_os.path.basename(f) for f in state["scanned_folders"]])
+
+    if not scanned_names:
+        return jsonify({"error": "没有扫描到的文件"}), 400
+
+    # 去重
+    scanned_names = list(dict.fromkeys(scanned_names))
+
+    try:
+        result = llm_match(unmatched_items, scanned_names, config)
+    except Exception as e:
+        return jsonify({"error": f"LLM匹配失败: {str(e)}"}), 500
+
+    # 将LLM结果更新到匹配结果中
+    llm_map = {}
+    for item in result["results"]:
+        if item.get("matched_name") and item.get("confidence", 0) >= 0.5:
+            llm_map[item["index"]] = item
+
+    updated_count = 0
+    for r in state["match_results"]:
+        if r["index"] in llm_map:
+            llm_item = llm_map[r["index"]]
+            matched_name = llm_item["matched_name"]
+            # 在扫描列表中找到对应路径
+            matched_path = None
+            all_paths = (state.get("scanned_files") or []) + (state.get("scanned_folders") or [])
+            for p in all_paths:
+                if _os.path.basename(p) == matched_name:
+                    matched_path = p
+                    break
+            if matched_path:
+                r["status"] = "已获取"
+                r["matched_files"] = [matched_path]
+                r["matched_names"] = [matched_name]
+                r["matched_types"] = ["文件夹" if _os.path.isdir(matched_path) else "文件"]
+                r["llm_confidence"] = llm_item["confidence"]
+                updated_count += 1
+
+    matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
+    return jsonify({
+        "success": True,
+        "matched_count": matched_count,
+        "total": len(state["match_results"]),
+        "llm_matched": updated_count,
+        "llm_results": result["results"],
+        "match_results": state["match_results"],
+        "usage": result.get("usage", {}),
+        "root_path": state.get("scan_root", ""),
+    })
 
 
 if __name__ == "__main__":

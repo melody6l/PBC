@@ -9,6 +9,7 @@ const API = {
     manualMatch: "/api/manual-match",
     folderTree: "/api/folder-tree",
     export: "/api/export",
+    llmMatch: "/api/llm-match",
 };
 
 // 全局状态
@@ -29,6 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initTreeToggle();
     initColToggle();
     initStatusFilter();
+    initLlmPanel();
 });
 
 // ====== 清单上传 ======
@@ -617,6 +619,90 @@ function initStatusFilter() {
         btn.classList.add("active");
         renderMainTableBody();
     });
+}
+
+// ====== AI辅助匹配 ======
+
+const LLM_PRESETS = {
+    "deepseek": { model: "deepseek-chat", base_url: "https://api.deepseek.com/v1" },
+    "openai-gpt4o-mini": { model: "gpt-4o-mini", base_url: "https://api.openai.com/v1" },
+    "openai-gpt4o": { model: "gpt-4o", base_url: "https://api.openai.com/v1" },
+    "zhipu-glm4": { model: "glm-4", base_url: "https://open.bigmodel.cn/api/paas/v4" },
+    "qwen": { model: "qwen-plus", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    "ollama": { model: "qwen2.5:7b", base_url: "http://localhost:11434/v1" },
+};
+
+function initLlmPanel() {
+    const btn = document.getElementById("llm-toggle-btn");
+    const config = document.getElementById("llm-config");
+    const provider = document.getElementById("llm-provider");
+    const baseUrlInput = document.getElementById("llm-base-url");
+    const hint = document.getElementById("llm-base-url-hint");
+    const matchBtn = document.getElementById("llm-match-btn");
+
+    btn.addEventListener("click", () => {
+        config.classList.toggle("hidden");
+    });
+
+    function updateBaseUrlHint() {
+        const p = provider.value;
+        const preset = LLM_PRESETS[p];
+        if (preset) {
+            baseUrlInput.placeholder = preset.base_url;
+            hint.textContent = p === "ollama" ? "确保Ollama已启动" : "留空则使用默认地址";
+        }
+    }
+    provider.addEventListener("change", updateBaseUrlHint);
+    updateBaseUrlHint();
+
+    matchBtn.addEventListener("click", () => doLlmMatch());
+}
+
+function doLlmMatch() {
+    if (!matchResults) { showToast("请先执行规则匹配", "error"); return; }
+
+    const hasUnmatched = matchResults.some((r) => r.status === "未获取");
+    if (!hasUnmatched) { showToast("所有项目已匹配，无需AI辅助", "success"); return; }
+
+    const provider = document.getElementById("llm-provider").value;
+    const apiKey = document.getElementById("llm-api-key").value.trim();
+    const baseUrl = document.getElementById("llm-base-url").value.trim();
+
+    if (provider !== "ollama" && !apiKey) {
+        showToast("请输入API Key", "error");
+        return;
+    }
+
+    const statusEl = document.getElementById("llm-status");
+    const matchBtn = document.getElementById("llm-match-btn");
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "正在AI匹配中，请稍候...";
+    matchBtn.disabled = true;
+    matchBtn.style.opacity = "0.6";
+
+    fetch(API.llmMatch, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (data.error) { showToast(data.error, "error"); return; }
+            // 后端已更新 match_results，直接用返回的 results 同步前端
+            if (data.match_results) {
+                matchResults = data.match_results;
+            }
+            renderMainTable();
+            updateStats(data.matched_count, data.total);
+            loadFileTree(scanRoot);
+            showToast(`AI匹配完成: ${data.llm_matched}项新增匹配 (共消耗${data.usage.total_tokens || 0} tokens)`, "success");
+        })
+        .catch((err) => showToast("AI匹配失败: " + err.message, "error"))
+        .finally(() => {
+            statusEl.classList.add("hidden");
+            matchBtn.disabled = false;
+            matchBtn.style.opacity = "1";
+        });
 }
 
 // ====== 提示消息 ======

@@ -641,3 +641,79 @@ h1 .icon { color: var(--primary-light); }
 .filter-btn.active[data-filter="no"] {
     background: var(--danger);
 }
+
+/* AI辅助匹配 */
+.llm-section {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+}
+
+.llm-config {
+    margin-top: 12px;
+    padding: 16px;
+    background: rgba(52,152,219,0.04);
+    border: 1px solid rgba(52,152,219,0.15);
+    border-radius: 8px;
+}
+
+.llm-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.llm-row label {
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 70px;
+    color: var(--primary);
+}
+
+.llm-row select,
+.llm-row input {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.llm-row select {
+    min-width: 200px;
+}
+
+.llm-row input {
+    flex: 1;
+    min-width: 200px;
+}
+
+.llm-row input:focus,
+.llm-row select:focus {
+    outline: none;
+    border-color: var(--primary-light);
+}
+
+.llm-row .hint {
+    font-size: 12px;
+    color: #999;
+}
+
+.llm-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+}
+
+.llm-status {
+    font-size: 13px;
+    color: var(--primary-light);
+    animation: llm-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes llm-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
