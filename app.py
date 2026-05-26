@@ -80,6 +80,8 @@ def scan_folder():
 
     state["scanned_files"] = scanned_files
     state["scanned_folders"] = scanned_folders
+    # 记录扫描根路径
+    state["scan_root"] = folder_path
     # 自动执行匹配
     if state["checklist"]:
         results = match_files(
@@ -96,6 +98,7 @@ def scan_folder():
             "results": results,
             "matched_count": matched_count,
             "total": len(results),
+            "root_path": folder_path,
         })
     else:
         return jsonify({
@@ -132,6 +135,7 @@ def do_match():
         "matched_count": matched_count,
         "total": len(results),
         "mode": mode,
+        "root_path": state.get("scan_root", ""),
     })
 
 
@@ -173,6 +177,7 @@ def set_name_column():
         "total": total,
         "results": results,
         "matched_count": matched_count,
+        "root_path": state.get("scan_root", ""),
     })
 
 
@@ -189,6 +194,11 @@ def update_status():
     for r in state["match_results"]:
         if r["index"] == index:
             r["status"] = status
+            # 改为未获取时清空匹配数据
+            if status == "未获取":
+                r["matched_files"] = []
+                r["matched_names"] = []
+                r["matched_types"] = []
             matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
             return jsonify({
                 "success": True,
@@ -197,6 +207,72 @@ def update_status():
             })
 
     return jsonify({"error": "未找到指定序号"}), 400
+
+
+def get_matched_paths():
+    """收集所有已被匹配引用的路径集合"""
+    matched = set()
+    if state["match_results"]:
+        for r in state["match_results"]:
+            for p in r["matched_files"]:
+                matched.add(p)
+    return matched
+
+
+@app.route("/api/folder-tree", methods=["GET"])
+def folder_tree():
+    """返回指定文件夹的直接子项，标注是否已匹配"""
+    path = request.args.get("path", "")
+    path = urllib.parse.unquote(path)
+    if not path or not os.path.isdir(path):
+        return jsonify({"error": "路径无效"}), 400
+
+    matched_paths = get_matched_paths()
+    items = []
+    for item in os.listdir(path):
+        if item.startswith(".") or item.startswith("~"):
+            continue
+        full = os.path.join(path, item)
+        is_dir = os.path.isdir(full)
+        items.append({
+            "name": item,
+            "path": full,
+            "is_dir": is_dir,
+            "is_matched": full in matched_paths,
+            "has_children": is_dir and any(
+                not x.startswith(".") and not x.startswith("~")
+                for x in os.listdir(full)
+            ),
+        })
+    # 排序：文件夹在前，文件在后
+    items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+    return jsonify({"items": items})
+
+
+@app.route("/api/manual-match", methods=["POST"])
+def manual_match():
+    """手动将文件/文件夹分配到清单中某一行"""
+    data = request.get_json()
+    file_path = data.get("file_path")
+    index = data.get("index")  # 1-based 清单行序号
+
+    if not state["match_results"]:
+        return jsonify({"error": "尚无匹配结果"}), 400
+
+    for r in state["match_results"]:
+        if r["index"] == index:
+            r["status"] = "已获取"
+            r["matched_files"].append(file_path)
+            r["matched_names"].append(os.path.basename(file_path))
+            r["matched_types"].append("文件夹" if os.path.isdir(file_path) else "文件")
+            break
+
+    matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
+    return jsonify({
+        "success": True,
+        "matched_count": matched_count,
+        "total": len(state["match_results"]),
+    })
 
 
 @app.route("/api/open", methods=["GET"])

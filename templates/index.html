@@ -56,6 +56,11 @@
                 <select id="name-col-select"></select>
                 <span class="hint" id="name-col-hint"></span>
             </div>
+            <!-- 列显示控制 -->
+            <div class="col-toggle-panel" id="col-toggle-panel">
+                <button class="btn btn-outline btn-sm" id="col-toggle-btn">&#128065; 显示列</button>
+                <div class="col-toggle-dropdown hidden" id="col-toggle-dropdown"></div>
+            </div>
             <div class="progress-bar">
                 <div class="fill" id="progress-fill" style="width: 0%"></div>
             </div>
@@ -75,19 +80,38 @@
             </div>
         </div>
 
-        <!-- 统一表格（清单预览 + 核对结果） -->
-        <div class="panel hidden" id="main-table-section">
-            <div class="panel-title">
-                &#128203; 文件核对清单
+        <!-- 分屏：左侧清单表格 + 右侧文件树 -->
+        <div class="split-view hidden" id="split-view">
+            <!-- 左侧：核对清单 -->
+            <div class="panel" id="main-table-section">
+                <div class="panel-title">
+                    &#128203; 文件核对清单
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success hidden" id="export-btn">&#128190; 导出Excel</button>
+                    <button class="btn btn-outline" id="toggle-tree-btn">&#128194; 显示资料</button>
+                </div>
+                <!-- 状态筛选栏 -->
+                <div class="status-filter-bar hidden" id="status-filter-bar">
+                    <button class="filter-btn active" data-filter="all">全部</button>
+                    <button class="filter-btn" data-filter="yes">&#10003; 已获取</button>
+                    <button class="filter-btn" data-filter="no">&#10007; 未获取</button>
+                </div>
+                <div class="result-table-wrapper" id="result-table-wrapper">
+                    <table class="result-table" id="main-table">
+                        <thead id="main-table-head"></thead>
+                        <tbody id="main-table-body"></tbody>
+                    </table>
+                </div>
             </div>
-            <div class="btn-group">
-                <button class="btn btn-success hidden" id="export-btn">&#128190; 导出Excel</button>
-            </div>
-            <div class="result-table-wrapper">
-                <table class="result-table" id="main-table">
-                    <thead id="main-table-head"></thead>
-                    <tbody id="main-table-body"></tbody>
-                </table>
+
+            <!-- 右侧：文件树浏览器 -->
+            <div class="file-tree-panel" id="file-tree-panel">
+                <div class="panel-title">
+                    &#128193; 资料浏览
+                    <button class="tree-close-btn" id="tree-close-btn" title="收起">&#10005;</button>
+                </div>
+                <div class="file-tree" id="file-tree"></div>
             </div>
         </div>
 
