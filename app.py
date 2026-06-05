@@ -92,12 +92,14 @@ def scan_folder():
             mode=state["match_mode"],
         )
         state["match_results"] = results
-        matched_count = sum(1 for r in results if r["status"] == "已获取")
+        matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
+        partial_count = sum(1 for r in results if r["status"] == "部分获取")
         return jsonify({
             "success": True,
             "scanned_count": len(scanned_files) + len(scanned_folders),
             "results": results,
             "matched_count": matched_count,
+            "partial_count": partial_count,
             "total": len(results),
             "root_path": folder_path,
         })
@@ -129,11 +131,13 @@ def do_match():
         mode=mode,
     )
     state["match_results"] = results
-    matched_count = sum(1 for r in results if r["status"] == "已获取")
+    matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
+    partial_count = sum(1 for r in results if r["status"] == "部分获取")
     return jsonify({
         "success": True,
         "results": results,
         "matched_count": matched_count,
+        "partial_count": partial_count,
         "total": len(results),
         "mode": mode,
         "root_path": state.get("scan_root", ""),
@@ -164,12 +168,14 @@ def set_name_column():
 
     # 如果已扫描文件夹，自动重新匹配
     matched_count = 0
+    partial_count = 0
     total = len(items)
     results = []
     if state["scanned_files"]:
         results = match_files(items, state["scanned_files"], state.get("scanned_folders", []), mode=state["match_mode"])
         state["match_results"] = results
-        matched_count = sum(1 for r in results if r["status"] == "已获取")
+        matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
+        partial_count = sum(1 for r in results if r["status"] == "部分获取")
 
     return jsonify({
         "success": True,
@@ -178,6 +184,7 @@ def set_name_column():
         "total": total,
         "results": results,
         "matched_count": matched_count,
+        "partial_count": partial_count,
         "root_path": state.get("scan_root", ""),
     })
 
@@ -187,7 +194,7 @@ def update_status():
     """手动更新某行的获取状态"""
     data = request.get_json()
     index = data.get("index")  # 1-based
-    status = data.get("status")  # "已获取" 或 "未获取"
+    status = data.get("status")  # "已获取" / "未获取" / "部分获取"
 
     if not state["match_results"]:
         return jsonify({"error": "尚无匹配结果"}), 400
@@ -200,10 +207,18 @@ def update_status():
                 r["matched_files"] = []
                 r["matched_names"] = []
                 r["matched_types"] = []
-            matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
+            matched_count = sum(
+                1 for r in state["match_results"]
+                if r["status"] in ("已获取", "部分获取")
+            )
+            partial_count = sum(
+                1 for r in state["match_results"]
+                if r["status"] == "部分获取"
+            )
             return jsonify({
                 "success": True,
                 "matched_count": matched_count,
+                "partial_count": partial_count,
                 "total": len(state["match_results"]),
             })
 
@@ -266,12 +281,15 @@ def manual_match():
             r["matched_files"].append(file_path)
             r["matched_names"].append(os.path.basename(file_path))
             r["matched_types"].append("文件夹" if os.path.isdir(file_path) else "文件")
+            r["match_count"] = len(r["matched_files"])
             break
 
-    matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
+    matched_count = sum(1 for r in state["match_results"] if r["status"] in ("已获取", "部分获取"))
+    partial_count = sum(1 for r in state["match_results"] if r["status"] == "部分获取")
     return jsonify({
         "success": True,
         "matched_count": matched_count,
+        "partial_count": partial_count,
         "total": len(state["match_results"]),
     })
 
@@ -386,13 +404,16 @@ def do_llm_match():
                 r["matched_files"] = [matched_path]
                 r["matched_names"] = [matched_name]
                 r["matched_types"] = ["文件夹" if _os.path.isdir(matched_path) else "文件"]
+                r["match_count"] = len(r["matched_files"])
                 r["llm_confidence"] = llm_item["confidence"]
                 updated_count += 1
 
-    matched_count = sum(1 for r in state["match_results"] if r["status"] == "已获取")
+    matched_count = sum(1 for r in state["match_results"] if r["status"] in ("已获取", "部分获取"))
+    partial_count = sum(1 for r in state["match_results"] if r["status"] == "部分获取")
     return jsonify({
         "success": True,
         "matched_count": matched_count,
+        "partial_count": partial_count,
         "total": len(state["match_results"]),
         "llm_matched": updated_count,
         "llm_results": result["results"],
@@ -400,6 +421,43 @@ def do_llm_match():
         "usage": result.get("usage", {}),
         "root_path": state.get("scan_root", ""),
     })
+
+
+@app.route("/api/browse-dirs", methods=["GET"])
+def browse_dirs():
+    """浏览指定路径下的子目录，用于文件夹选择弹窗"""
+    path = request.args.get("path", "")
+    path = urllib.parse.unquote(path) if path else ""
+
+    if not path:
+        # 返回磁盘根目录
+        if os.name == "nt":
+            import string
+            dirs = []
+            for letter in string.ascii_uppercase:
+                drive = f"{letter}:\\"
+                if os.path.isdir(drive):
+                    dirs.append({"name": drive, "path": drive})
+            return jsonify({"current": "", "dirs": dirs})
+        else:
+            return jsonify({"current": "/", "dirs": [{"name": "home", "path": "/home"}]})
+
+    if not os.path.isdir(path):
+        return jsonify({"error": "路径无效"}), 400
+
+    dirs = []
+    try:
+        for item in os.listdir(path):
+            if item.startswith(".") or item.startswith("~"):
+                continue
+            full = os.path.join(path, item)
+            if os.path.isdir(full):
+                dirs.append({"name": item, "path": full})
+    except PermissionError:
+        return jsonify({"error": "无权限访问该目录"}), 403
+
+    dirs.sort(key=lambda x: x["name"].lower())
+    return jsonify({"current": path, "dirs": dirs})
 
 
 if __name__ == "__main__":

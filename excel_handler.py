@@ -78,7 +78,7 @@ def export_results(results, headers, data, name_col_index):
         if has_any and name_val and name_val.strip():
             valid_rows.append(row)
 
-    # 写入列头：有效原始列 + 核对结果(倒数第二列) + 文件超链接(最后一列)
+    # 写入列头：有效原始列 + 核对结果 + 文件超链接
     col_headers = [headers[c] for c in valid_cols] + ["核对结果", "文件超链接"]
     for i, h in enumerate(col_headers, 1):
         cell = ws.cell(row=1, column=i, value=h)
@@ -102,18 +102,21 @@ def export_results(results, headers, data, name_col_index):
                 cell_val = orig_row[col_idx] if len(orig_row) > col_idx else ""
                 ws.cell(row=row_idx, column=col_num, value=cell_val)
 
-        # 核对结果（倒数第二列）
+        # 核对结果
         status_col = len(valid_cols) + 1
         status_cell = ws.cell(row=row_idx, column=status_col, value=result["status"])
         status_cell.alignment = Alignment(horizontal="center")
         if result["status"] == "已获取":
             status_cell.fill = green_fill
+        elif result["status"] == "部分获取":
+            partial_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+            status_cell.fill = partial_fill
         else:
             status_cell.fill = red_fill
 
         # 文件超链接（最后一列）
         link_col = len(valid_cols) + 2
-        matched_str = ", ".join(result["matched_names"]) if result["matched_names"] else ""
+        matched_str = "\n".join(result["matched_names"]) if result["matched_names"] else ""
         ws.cell(row=row_idx, column=link_col, value=matched_str)
 
         if result["matched_files"]:

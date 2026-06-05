@@ -32,7 +32,7 @@
                     <span class="badge" id="folder-badge">未扫描</span>
                 </div>
                 <div class="folder-input-group">
-                    <input type="text" id="folder-path" placeholder="请输入文件夹路径，如: D:\客户资料\2024年度">
+                    <input type="text" id="folder-path" placeholder="请输入文件夹路径，如: D:\\客户资料\\2024年度">
                     <button class="btn btn-primary" id="scan-btn">&#128270; 扫描</button>
                 </div>
                 <div id="scan-info" class="preview-info hidden"></div>
@@ -73,6 +73,10 @@
                     <div class="stat-value" id="stat-matched">0</div>
                     <div class="stat-label">已获取</div>
                 </div>
+                <div class="stat-card incomplete">
+                    <div class="stat-value" id="stat-incomplete">0</div>
+                    <div class="stat-label">部分获取</div>
+                </div>
                 <div class="stat-card missing">
                     <div class="stat-value" id="stat-missing">0</div>
                     <div class="stat-label">未获取</div>
@@ -111,7 +115,7 @@
 
         <!-- 分屏：左侧清单表格 + 右侧文件树 -->
         <div class="split-view hidden" id="split-view">
-            <!-- 左侧：核对清单 -->
+            <!-- 核对清单 -->
             <div class="panel" id="main-table-section">
                 <div class="panel-title">
                     &#128203; 文件核对清单
@@ -124,6 +128,7 @@
                 <div class="status-filter-bar hidden" id="status-filter-bar">
                     <button class="filter-btn active" data-filter="all">全部</button>
                     <button class="filter-btn" data-filter="yes">&#10003; 已获取</button>
+                    <button class="filter-btn" data-filter="incomplete">&#9888; 部分获取</button>
                     <button class="filter-btn" data-filter="no">&#10007; 未获取</button>
                 </div>
                 <div class="result-table-wrapper" id="result-table-wrapper">

@@ -90,5 +90,7 @@ def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy"):
             "matched_files": matched,
             "matched_names": matched_names,
             "matched_types": matched_types,
+            "match_count": len(matched),
+            "required_count": 1,
         })
     return results

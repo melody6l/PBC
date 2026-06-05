@@ -101,15 +101,45 @@ h1 .icon { color: var(--primary-light); }
 .upload-area p { margin-top: 10px; color: #666; }
 .upload-area .filename { color: var(--success); font-weight: 600; }
 
+/* 文件夹选择区域 */
+.folder-select-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 30px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.3s, background 0.3s;
+}
+
+.folder-select-area:hover {
+    border-color: var(--primary-light);
+    background: rgba(52, 152, 219, 0.05);
+}
+
+.folder-select-area.loaded {
+    border-color: var(--success);
+    background: rgba(39, 174, 96, 0.05);
+}
+
+.folder-select-area .upload-icon {
+    font-size: 36px;
+    color: var(--primary-light);
+}
+
+.folder-select-area p { margin-top: 10px; color: #666; }
+.folder-select-area .filename { color: var(--success); font-weight: 600; }
+
 /* 文件夹路径输入 */
 .folder-input-group {
     display: flex;
     gap: 10px;
+    padding: 30px 0;
+    align-items: center;
 }
 
 .folder-input-group input {
     flex: 1;
-    padding: 10px 14px;
+    padding: 12px 16px;
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 14px;
@@ -181,6 +211,7 @@ h1 .icon { color: var(--primary-light); }
 
 .stat-card.total .stat-value { color: var(--primary); }
 .stat-card.matched .stat-value { color: var(--success); }
+.stat-card.incomplete .stat-value { color: #f39c12; }
 .stat-card.missing .stat-value { color: var(--danger); }
 
 /* 匹配模式选择 */
@@ -296,6 +327,11 @@ h1 .icon { color: var(--primary-light); }
 .status-tag.no {
     background: var(--danger-bg);
     color: var(--danger);
+}
+
+.status-tag.partial {
+    background: #fff3cd;
+    color: #856404;
 }
 
 .result-table .index-cell { text-align: center; color: #666; }
@@ -599,49 +635,6 @@ h1 .icon { color: var(--primary-light); }
     height: 15px;
 }
 
-/* 状态筛选栏 */
-.status-filter-bar {
-    display: flex;
-    gap: 0;
-    margin: 12px 0 4px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-    width: fit-content;
-}
-
-.filter-btn {
-    padding: 7px 18px;
-    border: none;
-    background: var(--card-bg);
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.2s, color 0.2s;
-    font-family: inherit;
-    color: #555;
-    border-right: 1px solid var(--border);
-}
-
-.filter-btn:last-child { border-right: none; }
-
-.filter-btn:hover {
-    background: rgba(52,152,219,0.06);
-}
-
-.filter-btn.active {
-    background: var(--primary-light);
-    color: white;
-    font-weight: 600;
-}
-
-.filter-btn.active[data-filter="yes"] {
-    background: var(--success);
-}
-
-.filter-btn.active[data-filter="no"] {
-    background: var(--danger);
-}
-
 /* AI辅助匹配 */
 .llm-section {
     margin-top: 16px;
@@ -716,4 +709,81 @@ h1 .icon { color: var(--primary-light); }
 @keyframes llm-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+}
+
+/* 文件夹浏览弹窗 */
+.folder-browser-overlay {
+    z-index: 1000;
+}
+
+.folder-browser-modal {
+    max-width: 520px;
+    width: 90%;
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+}
+
+.folder-browser-modal h3 {
+    padding: 16px 20px;
+    margin: 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+}
+
+.folder-browser-path {
+    padding: 8px 20px;
+    background: rgba(52,152,219,0.04);
+    font-size: 12px;
+    color: #666;
+    border-bottom: 1px solid var(--border);
+    word-break: break-all;
+}
+
+.folder-browser-list {
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.folder-browser-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 14px;
+    border-bottom: 1px solid rgba(0,0,0,0.03);
+}
+
+.folder-browser-item:hover {
+    background: rgba(52,152,219,0.06);
+}
+
+.folder-browser-item .folder-browser-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.folder-browser-item .folder-browser-arrow {
+    margin-left: auto;
+    color: #bbb;
+    font-size: 18px;
+}
+
+.folder-browser-up {
+    color: var(--primary-light);
+    font-weight: 600;
+}
+
+.folder-browser-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: rgba(0,0,0,0.015);
 }

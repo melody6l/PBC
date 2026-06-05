@@ -10,6 +10,7 @@ const API = {
     folderTree: "/api/folder-tree",
     export: "/api/export",
     llmMatch: "/api/llm-match",
+    browseDirs: "/api/browse-dirs",
 };
 
 // 全局状态
@@ -19,7 +20,7 @@ let scannedCount = 0;
 let scanRoot = "";
 let showCols = null;           // null=全部显示，或 Set 存储可见列索引
 let colFilters = {};           // 列筛选条件 {colIdx: keyword}
-let statusFilter = "all";      // "all" | "yes" | "no"
+let statusFilter = "all";      // "all" | "yes" | "no" | "incomplete"
 
 // 页面初始化
 document.addEventListener("DOMContentLoaded", () => {
@@ -116,7 +117,7 @@ function setNameColumn(newIndex) {
             matchResults = data.results.length ? data.results : null;
             renderMainTable();
             if (matchResults) {
-                updateStats(data.matched_count, data.total);
+                updateStats(data.matched_count, data.total, data.partial_count);
                 document.getElementById("export-btn").classList.remove("hidden");
             }
             if (scanRoot) loadFileTree(scanRoot);
@@ -149,8 +150,10 @@ function scanFolder() {
             if (data.results && data.results.length) {
                 matchResults = data.results;
                 renderMainTable();
-                updateStats(data.matched_count, data.total);
+                updateStats(data.matched_count, data.total, data.partial_count);
                 document.getElementById("export-btn").classList.remove("hidden");
+                loadFileTree(scanRoot);
+            } else {
                 loadFileTree(scanRoot);
             }
             showToast(`已扫描 ${data.scanned_count} 个文件`, "success");
@@ -204,22 +207,12 @@ function renderMainTable() {
     const data = checklistData.data;
     const hasMatch = matchResults && matchResults.length > 0;
 
-    // 显示状态筛选栏（有匹配结果时）
-    const filterBar = document.getElementById("status-filter-bar");
-    if (hasMatch) {
-        filterBar.classList.remove("hidden");
-    } else {
-        filterBar.classList.add("hidden");
-        statusFilter = "all";
-    }
-
     const validCols = [];
     headers.forEach((h, colIdx) => {
         const hasData = data.some((row) => row[colIdx] && row[colIdx].trim());
         if (h.trim() || hasData) validCols.push(colIdx);
     });
 
-    // 保存 validCols 供列选择器使用
     currentValidCols = validCols;
 
     const validRows = [];
@@ -260,29 +253,29 @@ function renderMainTable() {
             const result = matchResults[i];
             const matchStatus = result ? result.status : "未获取";
             if (statusFilter === "yes" && matchStatus !== "已获取") return;
+            if (statusFilter === "incomplete" && matchStatus !== "部分获取") return;
             if (statusFilter === "no" && matchStatus !== "未获取") return;
         }
 
         bodyHtml += "<tr>";
         validCols.forEach((colIdx) => {
-            // 检查列是否可见
             if (showCols && !showCols.has(colIdx)) return;
             bodyHtml += `<td>${row[colIdx]}</td>`;
         });
         if (hasMatch) {
             const result = matchResults[i] || { index: i + 1, status: "未获取", matched_names: [], matched_files: [], matched_types: [] };
-            const statusClass = result.status === "已获取" ? "yes" : "no";
-            const toggleLabel = result.status === "已获取" ? "改为未获取" : "改为已获取";
-            const toggleClass = result.status === "已获取" ? "to-no" : "to-yes";
+            const statusClass = result.status === "已获取" ? "yes" : (result.status === "部分获取" ? "partial" : "no");
+            const nextStatus = result.status === "已获取" ? "部分获取" : (result.status === "部分获取" ? "未获取" : "已获取");
+            const toggleLabel = "改为" + nextStatus;
+            const toggleClass = result.status === "未获取" ? "to-yes" : "to-no";
             bodyHtml += `<td class="status-cell"><div class="status-row"><span class="status-tag ${statusClass}">${result.status}</span><button class="toggle-btn ${toggleClass}" onclick="toggleStatus(${result.index})">${toggleLabel}</button></div></td>`;
             let linkHtml = "";
-            if (result.status === "已获取" && result.matched_names.length) {
+            if (result.matched_names.length) {
                 result.matched_names.forEach((name, j) => {
                     const filePath = result.matched_files[j];
                     const fileUrl = "/api/open?path=" + encodeURIComponent(filePath);
                     const typeTag = result.matched_types[j] === "文件夹" ? `<span class="type-tag folder">文件夹</span>` : "";
-                    linkHtml += `<a href="${fileUrl}" title="${filePath}" target="_blank">${name}</a>${typeTag}`;
-                    if (j < result.matched_names.length - 1) linkHtml += ", ";
+                    linkHtml += `<div><a href="${fileUrl}" title="${filePath}" target="_blank">${name}</a>${typeTag}</div>`;
                 });
             }
             bodyHtml += `<td>${linkHtml}</td>`;
@@ -301,7 +294,7 @@ function toggleStatus(index) {
     if (!matchResults) return;
     let currentStatus = null;
     matchResults.forEach((r) => { if (r.index === index) currentStatus = r.status; });
-    const newStatus = currentStatus === "已获取" ? "未获取" : "已获取";
+    const newStatus = currentStatus === "已获取" ? "部分获取" : (currentStatus === "部分获取" ? "未获取" : "已获取");
     fetch(API.updateStatus, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index, status: newStatus }),
@@ -329,12 +322,14 @@ function toggleStatus(index) {
 
 // ====== 统计信息 ======
 
-function updateStats(matched, total) {
+function updateStats(matched, total, partial) {
+    partial = partial || 0;
     document.getElementById("stats-section").classList.remove("hidden");
     document.getElementById("stat-total").textContent = total;
     document.getElementById("stat-matched").textContent = matched;
-    document.getElementById("stat-missing").textContent = total - matched;
-    const percent = total > 0 ? (matched / total) * 100 : 0;
+    document.getElementById("stat-incomplete").textContent = partial;
+    document.getElementById("stat-missing").textContent = total - matched - partial;
+    const percent = total > 0 ? ((matched + partial * 0.5) / total) * 100 : 0;
     document.getElementById("progress-fill").style.width = percent + "%";
 }
 
@@ -377,21 +372,20 @@ function renderTreeNodes(items, container) {
         const icon = item.is_dir ? "\u{1F4C1}" : "\u{1F4C4}";
         const matchedTag = item.is_matched ? `<span class="type-tag matched">已匹配</span>` : "";
 
-        nodeLine.innerHTML = `<span class="node-icon">${icon}</span><span class="node-name${item.is_dir ? ' is-dir' : ''}" ${item.is_dir && !item.is_matched ? `onclick="toggleTreeNode(this)"` : ''}>${item.name}</span>${matchedTag}`;
+        // 所有项目都可以点击展开，包括已匹配的
+        nodeLine.innerHTML = `<span class="node-icon">${icon}</span><span class="node-name${item.is_dir ? ' is-dir' : ''}" ${item.is_dir ? `onclick="toggleTreeNode(this)"` : ''}>${item.name}</span>${matchedTag}`;
 
-        // 未匹配项添加分配按钮
-        if (!item.is_matched) {
-            const assignBtn = document.createElement("button");
-            assignBtn.className = "assign-btn";
-            assignBtn.textContent = "分配";
-            assignBtn.onclick = () => showAssignModal(item.path, item.is_dir);
-            nodeLine.appendChild(assignBtn);
-        }
+        // 所有项目都添加分配按钮（包括已匹配的）
+        const assignBtn = document.createElement("button");
+        assignBtn.className = "assign-btn";
+        assignBtn.textContent = "分配";
+        assignBtn.onclick = () => showAssignModal(item.path, item.is_dir);
+        nodeLine.appendChild(assignBtn);
 
         nodeDiv.appendChild(nodeLine);
 
-        // 文件夹且未匹配：添加子项容器
-        if (item.is_dir && !item.is_matched) {
+        // 文件夹：添加子项容器（包括已匹配的）
+        if (item.is_dir) {
             const childDiv = document.createElement("div");
             childDiv.className = "tree-children collapsed";
             childDiv.dataset.path = item.path;
@@ -437,22 +431,118 @@ function showAssignModal(filePath, isDir) {
     modal.innerHTML = `<h3>分配到清单项</h3><p style="color:#666;font-size:13px;margin-bottom:12px;">${isDir ? "文件夹" : "文件"}: ${filePath.split(/[\\/]/).pop()}</p><div class="assign-list"></div>`;
 
     const list = modal.querySelector(".assign-list");
+
+    // 分离未分配和已分配的清单项
+    const unassignedItems = [];
+    const assignedItems = [];
+
     matchResults.forEach((r) => {
-        const item = document.createElement("div");
-        item.className = "assign-item" + (r.status === "已获取" ? " already-matched" : "");
-        item.textContent = `${r.index}. ${r.checklist_name}` + (r.status === "已获取" ? " (已获取)" : "");
-        if (r.status !== "已获取") {
+        if (r.status === "已获取") {
+            assignedItems.push(r);
+        } else {
+            unassignedItems.push(r);
+        }
+    });
+
+    // 未分配清单项（可点击分配）
+    if (unassignedItems.length > 0) {
+        const sectionTitle = document.createElement("div");
+        sectionTitle.className = "assign-section-title";
+        sectionTitle.innerHTML = `<span style="color:var(--danger);font-weight:600;">&#10007; 未分配清单项</span>`;
+        list.appendChild(sectionTitle);
+
+        unassignedItems.forEach((r) => {
+            const item = document.createElement("div");
+            item.className = "assign-item";
+            item.textContent = `${r.index}. ${r.checklist_name}`;
             item.onclick = () => {
                 assignToChecklist(filePath, r.index, isDir);
                 overlay.remove();
                 modal.remove();
             };
-        }
-        list.appendChild(item);
-    });
+            list.appendChild(item);
+        });
+    }
+
+    // 已分配清单项（可点击查看）
+    if (assignedItems.length > 0) {
+        const sectionTitle = document.createElement("div");
+        sectionTitle.className = "assign-section-title";
+        sectionTitle.innerHTML = `<span style="color:var(--success);font-weight:600;">&#10003; 已分配清单项</span>`;
+        list.appendChild(sectionTitle);
+
+        assignedItems.forEach((r) => {
+            const item = document.createElement("div");
+            item.className = "assign-item already-matched";
+            item.textContent = `${r.index}. ${r.checklist_name} (已获取)`;
+            item.onclick = () => {
+                // 点击已分配项可以查看或取消分配
+                showAssignedDetail(r, filePath, isDir, overlay, modal);
+            };
+            list.appendChild(item);
+        });
+    }
 
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
+}
+
+function showAssignedDetail(result, newFilePath, isDir, overlay, modal) {
+    // 显示已分配项的详细信息
+    const detailModal = document.createElement("div");
+    detailModal.className = "assign-modal";
+    detailModal.innerHTML = `
+        <h3>清单项详情</h3>
+        <p style="color:#666;font-size:13px;margin-bottom:12px;">${result.index}. ${result.checklist_name}</p>
+        <div style="margin-bottom:12px;">
+            <p style="font-weight:600;margin-bottom:8px;">当前已分配的文件:</p>
+            ${result.matched_names.map((name, i) => `
+                <div style="padding:6px 8px;background:rgba(39,174,96,0.1);border-radius:4px;margin-bottom:4px;font-size:13px;">
+                    ${name} <span style="color:#666;">(${result.matched_types[i]})</span>
+                </div>
+            `).join('')}
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="this.closest('.assign-modal').remove();">关闭</button>
+            <button class="btn btn-danger" onclick="unassignFromChecklist(${result.index}, '${newFilePath}', ${isDir})">取消分配并重新分配</button>
+        </div>
+    `;
+
+    // 移除当前弹窗，显示详情弹窗
+    modal.remove();
+    document.body.appendChild(detailModal);
+}
+
+function unassignFromChecklist(index, newFilePath, isDir) {
+    // 取消分配
+    fetch(API.updateStatus, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index, status: "未获取" }),
+    })
+        .then((r) => r.json())
+        .then((data) => {
+            if (data.error) { showToast(data.error, "error"); return; }
+            matchResults.forEach((r) => {
+                if (r.index === index) {
+                    r.status = "未获取";
+                    r.matched_files = [];
+                    r.matched_names = [];
+                    r.matched_types = [];
+                }
+            });
+
+            // 关闭详情弹窗
+            document.querySelectorAll(".assign-modal").forEach(m => m.remove());
+            document.querySelectorAll(".modal-overlay").forEach(o => o.remove());
+
+            // 重新显示分配弹窗
+            showAssignModal(newFilePath, isDir);
+
+            renderMainTable();
+            updateStats(data.matched_count, data.total);
+            showToast("已取消分配", "success");
+        })
+        .catch((err) => showToast("取消分配失败: " + err.message, "error"));
 }
 
 function assignToChecklist(filePath, index, isDir) {
@@ -574,6 +664,7 @@ function renderMainTableBody() {
             const result = matchResults[i];
             const matchStatus = result ? result.status : "未获取";
             if (statusFilter === "yes" && matchStatus !== "已获取") return;
+            if (statusFilter === "incomplete" && matchStatus !== "部分获取") return;
             if (statusFilter === "no" && matchStatus !== "未获取") return;
         }
 
@@ -584,18 +675,18 @@ function renderMainTableBody() {
         });
         if (hasMatch) {
             const result = matchResults[i] || { index: i + 1, status: "未获取", matched_names: [], matched_files: [], matched_types: [] };
-            const statusClass = result.status === "已获取" ? "yes" : "no";
-            const toggleLabel = result.status === "已获取" ? "改为未获取" : "改为已获取";
-            const toggleClass = result.status === "已获取" ? "to-no" : "to-yes";
+            const statusClass = result.status === "已获取" ? "yes" : (result.status === "部分获取" ? "partial" : "no");
+            const nextStatus = result.status === "已获取" ? "部分获取" : (result.status === "部分获取" ? "未获取" : "已获取");
+            const toggleLabel = "改为" + nextStatus;
+            const toggleClass = result.status === "未获取" ? "to-yes" : "to-no";
             bodyHtml += `<td class="status-cell"><div class="status-row"><span class="status-tag ${statusClass}">${result.status}</span><button class="toggle-btn ${toggleClass}" onclick="toggleStatus(${result.index})">${toggleLabel}</button></div></td>`;
             let linkHtml = "";
-            if (result.status === "已获取" && result.matched_names.length) {
+            if (result.matched_names.length) {
                 result.matched_names.forEach((name, j) => {
                     const filePath = result.matched_files[j];
                     const fileUrl = "/api/open?path=" + encodeURIComponent(filePath);
                     const typeTag = result.matched_types[j] === "文件夹" ? `<span class="type-tag folder">文件夹</span>` : "";
-                    linkHtml += `<a href="${fileUrl}" title="${filePath}" target="_blank">${name}</a>${typeTag}`;
-                    if (j < result.matched_names.length - 1) linkHtml += ", ";
+                    linkHtml += `<div><a href="${fileUrl}" title="${filePath}" target="_blank">${name}</a>${typeTag}</div>`;
                 });
             }
             bodyHtml += `<td>${linkHtml}</td>`;
