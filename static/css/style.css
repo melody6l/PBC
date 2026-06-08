@@ -41,7 +41,7 @@ h1 .icon { color: var(--primary-light); }
 .panel {
     background: var(--card-bg);
     border-radius: 8px;
-    padding: 24px;
+    padding: 16px;
     margin-bottom: 20px;
     box-shadow: var(--shadow);
 }
@@ -49,10 +49,11 @@ h1 .icon { color: var(--primary-light); }
 .panel-title {
     font-size: 16px;
     font-weight: 600;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     color: var(--primary);
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
 }
 
@@ -180,7 +181,14 @@ h1 .icon { color: var(--primary-light); }
 }
 .btn-outline:hover { background: rgba(52, 152, 219, 0.1); }
 
-.btn-group { display: flex; gap: 10px; margin-top: 16px; }
+.btn-group { display: flex; gap: 10px; margin-top: 12px; }
+
+/* 面板操作按钮组 */
+.panel-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
 
 /* 统计信息 */
 .stats {
@@ -269,34 +277,47 @@ h1 .icon { color: var(--primary-light); }
 
 /* 结果表格 */
 .result-table-wrapper {
+    flex: 1;
     overflow: auto;
-    margin-top: 20px;
-    max-height: 65vh;
+    margin-top: 8px;
     position: relative;
 }
 
 .result-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 14px;
+    font-size: 12px;
+    table-layout: fixed;
 }
 
 .result-table thead th {
     background: var(--primary);
     color: white;
-    padding: 12px 16px;
+    padding: 6px 10px;
     text-align: center;
     font-weight: 600;
     white-space: nowrap;
     position: sticky;
     top: 0;
     z-index: 2;
+    font-size: 12px;
+    cursor: col-resize;
+    user-select: none;
+    border-right: 2px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.result-table thead th:hover {
+    border-right: 2px solid rgba(255,255,255,0.5);
 }
 
 .result-table td {
-    padding: 10px 16px;
+    padding: 4px 10px;
     border-bottom: 1px solid var(--border);
     vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .result-table tr:hover td { background: rgba(52, 152, 219, 0.04); }
@@ -385,6 +406,8 @@ h1 .icon { color: var(--primary-light); }
     display: flex;
     gap: 0;
     margin-bottom: 20px;
+    height: calc(100vh - 40px);
+    overflow: hidden;
 }
 
 .split-view .panel {
@@ -392,6 +415,9 @@ h1 .icon { color: var(--primary-light); }
     min-width: 0;
     margin-bottom: 0;
     border-radius: 8px 0 0 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .file-tree-panel {

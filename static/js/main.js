@@ -32,7 +32,59 @@ document.addEventListener("DOMContentLoaded", () => {
     initColToggle();
     initStatusFilter();
     initLlmPanel();
+    initColumnResize();
 });
+
+// ====== 列宽拖拽调整 ======
+function initColumnResize() {
+    const table = document.getElementById("main-table");
+    let resizing = false;
+    let thElement = null;
+    let startX = 0;
+    let startWidth = 0;
+
+    table.addEventListener("mousedown", (e) => {
+        const th = e.target.closest("th");
+        if (!th) return;
+
+        // 检查是否在列边框附近（右侧10px区域）
+        const rect = th.getBoundingClientRect();
+        const isNearRightEdge = e.clientX > rect.right - 10;
+
+        if (isNearRightEdge) {
+            resizing = true;
+            thElement = th;
+            startX = e.clientX;
+            startWidth = th.offsetWidth;
+            document.body.style.cursor = "col-resize";
+            e.preventDefault();
+        }
+    });
+
+    document.addEventListener("mousemove", (e) => {
+        if (!resizing || !thElement) return;
+
+        const diff = e.clientX - startX;
+        const newWidth = Math.max(50, startWidth + diff);
+        thElement.style.width = newWidth + "px";
+
+        // 同时调整对应列的所有单元格
+        const colIndex = Array.from(thElement.parentNode.children).indexOf(thElement);
+        const rows = table.querySelectorAll("tbody tr");
+        rows.forEach(row => {
+            const td = row.children[colIndex];
+            if (td) td.style.width = newWidth + "px";
+        });
+    });
+
+    document.addEventListener("mouseup", () => {
+        if (resizing) {
+            resizing = false;
+            thElement = null;
+            document.body.style.cursor = "";
+        }
+    });
+}
 
 // ====== 清单上传 ======
 
