@@ -20,7 +20,7 @@ let scannedCount = 0;
 let scanRoot = "";
 let showCols = null;           // null=全部显示，或 Set 存储可见列索引
 let colFilters = {};           // 列筛选条件 {colIdx: keyword}
-let statusFilter = "all";      // "all" | "yes" | "no" | "incomplete"
+let statusMenuIndex = null;    // 当前右键菜单对应的清单序号
 
 // 页面初始化
 document.addEventListener("DOMContentLoaded", () => {
@@ -30,9 +30,10 @@ document.addEventListener("DOMContentLoaded", () => {
     initNameColSelector();
     initTreeToggle();
     initColToggle();
-    initStatusFilter();
+    initStatusContextMenu();
     initLlmPanel();
     initColumnResize();
+    updateWorkflowState();
 });
 
 // ====== 列宽拖拽调整 ======
@@ -91,6 +92,11 @@ function initColumnResize() {
 function initUploadArea() {
     const area = document.getElementById("upload-area");
     const input = document.getElementById("checklist-input");
+    const triggerBtn = document.getElementById("upload-trigger-btn");
+    const reuploadBtn = document.getElementById("reupload-btn");
+
+    if (triggerBtn) triggerBtn.addEventListener("click", (e) => { e.stopPropagation(); input.click(); });
+    if (reuploadBtn) reuploadBtn.addEventListener("click", (e) => { e.stopPropagation(); input.click(); });
     area.addEventListener("click", () => input.click());
     area.addEventListener("dragover", (e) => { e.preventDefault(); area.classList.add("dragover"); });
     area.addEventListener("dragleave", () => area.classList.remove("dragover"));
@@ -114,9 +120,13 @@ function handleFileUpload(file) {
             if (data.error) { showToast(data.error, "error"); return; }
             checklistData = data;
             matchResults = null;
+            document.getElementById("stats-section").classList.add("hidden");
+            document.getElementById("progress-fill").style.width = "0%";
+            document.getElementById("export-btn").classList.add("hidden");
             updateUploadUI(file.name, data);
             populateNameColSelect(data);
             renderMainTable();
+            updateWorkflowState();
             showToast(`清单已加载，共 ${data.total} 项`, "success");
         })
         .catch((err) => showToast("上传失败: " + err.message, "error"));
@@ -124,9 +134,14 @@ function handleFileUpload(file) {
 
 function updateUploadUI(filename, data) {
     const area = document.getElementById("upload-area");
+    const empty = document.getElementById("upload-empty");
+    const done = document.getElementById("upload-done");
+    const summary = document.getElementById("upload-summary");
     area.classList.add("loaded");
-    area.innerHTML = `<div class="upload-icon">&#9989;</div><p class="filename">${filename}</p><p>共 ${data.total} 项文件</p>`;
-    document.getElementById("checklist-badge").textContent = `${data.total}项`;
+    if (empty) empty.classList.add("hidden");
+    if (done) done.classList.remove("hidden");
+    if (summary) summary.textContent = `${filename} · 共 ${data.total} 项文件`;
+    document.getElementById("checklist-badge").textContent = `✓ ${data.total}项`;
 }
 
 // ====== 名称列选择 ======
@@ -140,7 +155,6 @@ function initNameColSelector() {
 function populateNameColSelect(data) {
     const selector = document.getElementById("name-col-selector");
     const select = document.getElementById("name-col-select");
-    const hint = document.getElementById("name-col-hint");
     selector.classList.remove("hidden");
     select.innerHTML = "";
     data.headers.forEach((h, i) => {
@@ -152,7 +166,6 @@ function populateNameColSelect(data) {
         if (i === data.name_col_index) option.selected = true;
         select.appendChild(option);
     });
-    hint.textContent = `(自动识别: 第${data.name_col_index + 1}列 "${data.headers[data.name_col_index]}")`;
 }
 
 function setNameColumn(newIndex) {
@@ -173,6 +186,7 @@ function setNameColumn(newIndex) {
                 document.getElementById("export-btn").classList.remove("hidden");
             }
             if (scanRoot) loadFileTree(scanRoot);
+            updateWorkflowState();
             showToast(`名称列已切换为第${newIndex + 1}列`, "success");
         })
         .catch((err) => showToast("切换失败: " + err.message, "error"));
@@ -196,9 +210,7 @@ function scanFolder() {
             if (data.error) { showToast(data.error, "error"); return; }
             scannedCount = data.scanned_count;
             scanRoot = data.root_path || folderPath;
-            document.getElementById("scan-info").classList.remove("hidden");
-            document.getElementById("scan-info").textContent = `已扫描 ${data.scanned_count} 个文件`;
-            document.getElementById("folder-badge").textContent = `${data.scanned_count}个文件`;
+            document.getElementById("folder-badge").textContent = `✓ ${data.scanned_count}个文件`;
             if (data.results && data.results.length) {
                 matchResults = data.results;
                 renderMainTable();
@@ -208,6 +220,7 @@ function scanFolder() {
             } else {
                 loadFileTree(scanRoot);
             }
+            updateWorkflowState();
             showToast(`已扫描 ${data.scanned_count} 个文件`, "success");
         })
         .catch((err) => showToast("扫描失败: " + err.message, "error"));
@@ -220,26 +233,34 @@ function initMatchControls() {
     document.getElementById("export-btn").addEventListener("click", () => exportExcel());
 }
 
-function doMatch() {
+async function doMatch() {
     const mode = document.getElementById("match-mode").value;
     if (!checklistData) { showToast("请先上传清单文件", "error"); return; }
     if (!scannedCount) { showToast("请先扫描目标文件夹", "error"); return; }
-    fetch(API.match, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
-    })
-        .then((r) => r.json())
-        .then((data) => {
-            if (data.error) { showToast(data.error, "error"); return; }
-            matchResults = data.results;
-            scanRoot = data.root_path || scanRoot;
-            renderMainTable();
-            updateStats(data.matched_count, data.total);
-            document.getElementById("export-btn").classList.remove("hidden");
-            loadFileTree(scanRoot);
+
+    try {
+        const r = await fetch(API.match, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode }),
+        });
+        const data = await r.json();
+        if (data.error) { showToast(data.error, "error"); return; }
+        matchResults = data.results;
+        scanRoot = data.root_path || scanRoot;
+        renderMainTable();
+        updateStats(data.matched_count, data.total);
+        document.getElementById("export-btn").classList.remove("hidden");
+        loadFileTree(scanRoot);
+        updateWorkflowState();
+
+        if (document.getElementById("llm-enabled").checked) {
+            await runLlmMatch();
+        } else {
             showToast(`匹配完成: ${data.matched_count}/${data.total} 已获取`, "success");
-        })
-        .catch((err) => showToast("匹配失败: " + err.message, "error"));
+        }
+    } catch (err) {
+        showToast("匹配失败: " + err.message, "error");
+    }
 }
 
 // ====== 统一表格渲染 ======
@@ -248,6 +269,13 @@ function renderMainTable() {
     if (!checklistData) {
         document.getElementById("split-view").classList.add("hidden");
         document.getElementById("empty-state").classList.remove("hidden");
+        document.querySelector("#empty-state p").textContent = "请先上传需求文件清单，再扫描客户资料文件夹";
+        return;
+    }
+    if (!matchResults) {
+        document.getElementById("split-view").classList.add("hidden");
+        document.getElementById("empty-state").classList.remove("hidden");
+        document.querySelector("#empty-state p").textContent = "请继续扫描客户资料文件夹，匹配完成后显示核对结果";
         return;
     }
     document.getElementById("split-view").classList.remove("hidden");
@@ -281,7 +309,7 @@ function renderMainTable() {
             headHtml += `<th>${headers[colIdx]}</th>`;
         }
     });
-    if (hasMatch) headHtml += `<th>核对结果</th><th>文件超链接</th>`;
+    if (hasMatch) headHtml += `<th class="status-head">核对结果</th><th>文件超链接</th>`;
     headHtml += "</tr>";
     thead.innerHTML = headHtml;
 
@@ -300,15 +328,6 @@ function renderMainTable() {
         }
         if (skip) return;
 
-        // 应用状态筛选
-        if (hasMatch && statusFilter !== "all") {
-            const result = matchResults[i];
-            const matchStatus = result ? result.status : "未获取";
-            if (statusFilter === "yes" && matchStatus !== "已获取") return;
-            if (statusFilter === "incomplete" && matchStatus !== "部分获取") return;
-            if (statusFilter === "no" && matchStatus !== "未获取") return;
-        }
-
         bodyHtml += "<tr>";
         validCols.forEach((colIdx) => {
             if (showCols && !showCols.has(colIdx)) return;
@@ -316,11 +335,7 @@ function renderMainTable() {
         });
         if (hasMatch) {
             const result = matchResults[i] || { index: i + 1, status: "未获取", matched_names: [], matched_files: [], matched_types: [] };
-            const statusClass = result.status === "已获取" ? "yes" : (result.status === "部分获取" ? "partial" : "no");
-            const nextStatus = result.status === "已获取" ? "部分获取" : (result.status === "部分获取" ? "未获取" : "已获取");
-            const toggleLabel = "改为" + nextStatus;
-            const toggleClass = result.status === "未获取" ? "to-yes" : "to-no";
-            bodyHtml += `<td class="status-cell"><div class="status-row"><span class="status-tag ${statusClass}">${result.status}</span><button class="toggle-btn ${toggleClass}" onclick="toggleStatus(${result.index})">${toggleLabel}</button></div></td>`;
+            bodyHtml += renderStatusCell(result);
             let linkHtml = "";
             if (result.matched_names.length) {
                 result.matched_names.forEach((name, j) => {
@@ -342,11 +357,17 @@ function renderMainTable() {
 
 // ====== 状态切换 ======
 
-function toggleStatus(index) {
+function renderStatusCell(result) {
+    const statusClass = result.status === "已获取" ? "yes" : (result.status === "部分获取" ? "partial" : "no");
+    return `<td class="status-cell"><span class="status-tag ${statusClass}" title="右键切换状态" oncontextmenu="showStatusContextMenu(event, ${result.index})">${result.status}</span></td>`;
+}
+
+function toggleStatus(index, targetStatus) {
     if (!matchResults) return;
     let currentStatus = null;
     matchResults.forEach((r) => { if (r.index === index) currentStatus = r.status; });
-    const newStatus = currentStatus === "已获取" ? "部分获取" : (currentStatus === "部分获取" ? "未获取" : "已获取");
+    const newStatus = targetStatus || (currentStatus === "已获取" ? "部分获取" : (currentStatus === "部分获取" ? "未获取" : "已获取"));
+    if (!newStatus || newStatus === currentStatus) return;
     fetch(API.updateStatus, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ index, status: newStatus }),
@@ -367,7 +388,9 @@ function toggleStatus(index) {
             });
             renderMainTable();
             updateStats(data.matched_count, data.total);
+            updateWorkflowState();
             if (scanRoot) loadFileTree(scanRoot);
+            showToast(`已切换为${newStatus}`, "success");
         })
         .catch((err) => showToast("更新失败: " + err.message, "error"));
 }
@@ -377,12 +400,52 @@ function toggleStatus(index) {
 function updateStats(matched, total, partial) {
     partial = partial || 0;
     document.getElementById("stats-section").classList.remove("hidden");
-    document.getElementById("stat-total").textContent = total;
-    document.getElementById("stat-matched").textContent = matched;
-    document.getElementById("stat-incomplete").textContent = partial;
-    document.getElementById("stat-missing").textContent = total - matched - partial;
+    animateNumber("stat-total", total);
+    animateNumber("stat-matched", matched);
+    animateNumber("stat-incomplete", partial);
+    animateNumber("stat-missing", total - matched - partial);
     const percent = total > 0 ? ((matched + partial * 0.5) / total) * 100 : 0;
     document.getElementById("progress-fill").style.width = percent + "%";
+}
+
+function updateWorkflowState() {
+    const hasChecklist = Boolean(checklistData);
+    const hasScannedFolder = scannedCount > 0;
+    const hasMatchResult = Boolean(matchResults && matchResults.length);
+
+    setWorkflowStep("workflow-step-1", hasChecklist ? "completed" : "active");
+    setWorkflowStep("workflow-step-2", hasScannedFolder ? "completed" : (hasChecklist ? "active" : "pending"));
+    setWorkflowStep("workflow-step-3", hasMatchResult ? "completed" : (hasScannedFolder ? "active" : "pending"));
+    document.getElementById("name-col-selector").classList.toggle("hidden", !hasChecklist);
+
+    document.getElementById("match-badge").textContent = hasMatchResult ? "✓ 已完成" : (hasScannedFolder ? "待匹配" : "待前置");
+
+    const badgeText = hasMatchResult ? "匹配完成" : (hasScannedFolder ? "步骤 3 待匹配" : (hasChecklist ? "步骤 2 待扫描" : "步骤 1 待上传"));
+    document.getElementById("workflow-state-badge").textContent = badgeText;
+}
+
+function setWorkflowStep(id, state) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove("active", "completed", "pending");
+    el.classList.add(state);
+}
+
+function animateNumber(id, target) {
+    const el = document.getElementById(id);
+    const start = Number(el.textContent) || 0;
+    const end = Number(target) || 0;
+    const duration = 360;
+    const startTime = performance.now();
+
+    function tick(now) {
+        const progress = Math.min((now - startTime) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        el.textContent = Math.round(start + (end - start) * eased);
+        if (progress < 1) requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tick);
 }
 
 // ====== 文件树 ======
@@ -427,12 +490,14 @@ function renderTreeNodes(items, container) {
         // 所有项目都可以点击展开，包括已匹配的
         nodeLine.innerHTML = `<span class="node-icon">${icon}</span><span class="node-name${item.is_dir ? ' is-dir' : ''}" ${item.is_dir ? `onclick="toggleTreeNode(this)"` : ''}>${item.name}</span>${matchedTag}`;
 
-        // 所有项目都添加分配按钮（包括已匹配的）
-        const assignBtn = document.createElement("button");
-        assignBtn.className = "assign-btn";
-        assignBtn.textContent = "分配";
-        assignBtn.onclick = () => showAssignModal(item.path, item.is_dir);
-        nodeLine.appendChild(assignBtn);
+        // 已匹配的资料不再显示分配按钮，避免重复分配
+        if (!item.is_matched) {
+            const assignBtn = document.createElement("button");
+            assignBtn.className = "assign-btn";
+            assignBtn.textContent = "分配";
+            assignBtn.onclick = () => showAssignModal(item.path, item.is_dir);
+            nodeLine.appendChild(assignBtn);
+        }
 
         nodeDiv.appendChild(nodeLine);
 
@@ -592,6 +657,7 @@ function unassignFromChecklist(index, newFilePath, isDir) {
 
             renderMainTable();
             updateStats(data.matched_count, data.total);
+            updateWorkflowState();
             showToast("已取消分配", "success");
         })
         .catch((err) => showToast("取消分配失败: " + err.message, "error"));
@@ -615,6 +681,7 @@ function assignToChecklist(filePath, index, isDir) {
             });
             renderMainTable();
             updateStats(data.matched_count, data.total);
+            updateWorkflowState();
             loadFileTree(scanRoot);
             showToast("已分配到清单项", "success");
         })
@@ -697,7 +764,7 @@ function renderMainTableBody() {
             headHtml += `<th>${headers[colIdx]}</th>`;
         }
     });
-    if (hasMatch) headHtml += `<th>核对结果</th><th>文件超链接</th>`;
+    if (hasMatch) headHtml += `<th class="status-head">核对结果</th><th>文件超链接</th>`;
     headHtml += "</tr>";
     thead.innerHTML = headHtml;
 
@@ -711,15 +778,6 @@ function renderMainTableBody() {
 
     let bodyHtml = "";
     validRows.forEach(({ row, i }) => {
-        // 状态筛选
-        if (hasMatch && statusFilter !== "all") {
-            const result = matchResults[i];
-            const matchStatus = result ? result.status : "未获取";
-            if (statusFilter === "yes" && matchStatus !== "已获取") return;
-            if (statusFilter === "incomplete" && matchStatus !== "部分获取") return;
-            if (statusFilter === "no" && matchStatus !== "未获取") return;
-        }
-
         bodyHtml += "<tr>";
         currentValidCols.forEach((colIdx) => {
             if (showCols && !showCols.has(colIdx)) return;
@@ -727,11 +785,7 @@ function renderMainTableBody() {
         });
         if (hasMatch) {
             const result = matchResults[i] || { index: i + 1, status: "未获取", matched_names: [], matched_files: [], matched_types: [] };
-            const statusClass = result.status === "已获取" ? "yes" : (result.status === "部分获取" ? "partial" : "no");
-            const nextStatus = result.status === "已获取" ? "部分获取" : (result.status === "部分获取" ? "未获取" : "已获取");
-            const toggleLabel = "改为" + nextStatus;
-            const toggleClass = result.status === "未获取" ? "to-yes" : "to-no";
-            bodyHtml += `<td class="status-cell"><div class="status-row"><span class="status-tag ${statusClass}">${result.status}</span><button class="toggle-btn ${toggleClass}" onclick="toggleStatus(${result.index})">${toggleLabel}</button></div></td>`;
+            bodyHtml += renderStatusCell(result);
             let linkHtml = "";
             if (result.matched_names.length) {
                 result.matched_names.forEach((name, j) => {
@@ -748,20 +802,41 @@ function renderMainTableBody() {
     tbody.innerHTML = bodyHtml;
 }
 
-// ====== 状态筛选 ======
+function initStatusContextMenu() {
+    const menu = document.getElementById("status-context-menu");
+    if (!menu) return;
 
-function initStatusFilter() {
-    const bar = document.getElementById("status-filter-bar");
-    bar.addEventListener("click", (e) => {
-        const btn = e.target.closest(".filter-btn");
-        if (!btn) return;
-        const filter = btn.dataset.filter;
-        if (filter === statusFilter) return;
-        statusFilter = filter;
-        bar.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        renderMainTableBody();
+    menu.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-status]");
+        if (!btn || statusMenuIndex === null) return;
+        const index = statusMenuIndex;
+        const targetStatus = btn.dataset.status;
+        hideStatusContextMenu();
+        toggleStatus(index, targetStatus);
     });
+
+    document.addEventListener("click", hideStatusContextMenu);
+    document.addEventListener("scroll", hideStatusContextMenu, true);
+}
+
+function showStatusContextMenu(event, index) {
+    event.preventDefault();
+    const menu = document.getElementById("status-context-menu");
+    if (!menu) return;
+
+    statusMenuIndex = index;
+    menu.classList.remove("hidden");
+    const rect = menu.getBoundingClientRect();
+    const left = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+    const top = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+    menu.style.left = Math.max(8, left) + "px";
+    menu.style.top = Math.max(8, top) + "px";
+}
+
+function hideStatusContextMenu() {
+    const menu = document.getElementById("status-context-menu");
+    if (menu) menu.classList.add("hidden");
+    statusMenuIndex = null;
 }
 
 // ====== AI辅助匹配 ======
@@ -776,15 +851,16 @@ const LLM_PRESETS = {
 };
 
 function initLlmPanel() {
-    const btn = document.getElementById("llm-toggle-btn");
+    const enabled = document.getElementById("llm-enabled");
     const config = document.getElementById("llm-config");
     const provider = document.getElementById("llm-provider");
     const baseUrlInput = document.getElementById("llm-base-url");
     const hint = document.getElementById("llm-base-url-hint");
-    const matchBtn = document.getElementById("llm-match-btn");
+    const step3 = document.getElementById("workflow-step-3");
 
-    btn.addEventListener("click", () => {
-        config.classList.toggle("hidden");
+    enabled.addEventListener("change", () => {
+        config.classList.toggle("hidden", !enabled.checked);
+        step3.classList.toggle("ai-open", enabled.checked);
     });
 
     function updateBaseUrlHint() {
@@ -797,15 +873,13 @@ function initLlmPanel() {
     }
     provider.addEventListener("change", updateBaseUrlHint);
     updateBaseUrlHint();
-
-    matchBtn.addEventListener("click", () => doLlmMatch());
 }
 
-function doLlmMatch() {
-    if (!matchResults) { showToast("请先执行规则匹配", "error"); return; }
+async function runLlmMatch() {
+    if (!matchResults) { showToast("请先执行规则匹配", "error"); return false; }
 
     const hasUnmatched = matchResults.some((r) => r.status === "未获取");
-    if (!hasUnmatched) { showToast("所有项目已匹配，无需AI辅助", "success"); return; }
+    if (!hasUnmatched) { showToast("规则匹配已完成，暂无需AI辅助", "success"); return true; }
 
     const provider = document.getElementById("llm-provider").value;
     const apiKey = document.getElementById("llm-api-key").value.trim();
@@ -813,46 +887,188 @@ function doLlmMatch() {
 
     if (provider !== "ollama" && !apiKey) {
         showToast("请输入API Key", "error");
-        return;
+        return false;
     }
 
     const statusEl = document.getElementById("llm-status");
-    const matchBtn = document.getElementById("llm-match-btn");
+    const matchBtn = document.getElementById("match-btn");
     statusEl.classList.remove("hidden");
     statusEl.textContent = "正在AI匹配中，请稍候...";
     matchBtn.disabled = true;
     matchBtn.style.opacity = "0.6";
 
-    fetch(API.llmMatch, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
-    })
-        .then((r) => r.json())
-        .then((data) => {
-            if (data.error) { showToast(data.error, "error"); return; }
-            // 后端已更新 match_results，直接用返回的 results 同步前端
-            if (data.match_results) {
-                matchResults = data.match_results;
-            }
-            renderMainTable();
-            updateStats(data.matched_count, data.total);
-            loadFileTree(scanRoot);
-            showToast(`AI匹配完成: ${data.llm_matched}项新增匹配 (共消耗${data.usage.total_tokens || 0} tokens)`, "success");
-        })
-        .catch((err) => showToast("AI匹配失败: " + err.message, "error"))
-        .finally(() => {
-            statusEl.classList.add("hidden");
-            matchBtn.disabled = false;
-            matchBtn.style.opacity = "1";
+    try {
+        const r = await fetch(API.llmMatch, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
         });
+        const data = await r.json();
+        if (data.error) { showToast(data.error, "error"); return false; }
+        if (data.match_results) {
+            matchResults = data.match_results;
+        }
+        renderMainTable();
+        updateStats(data.matched_count, data.total);
+        updateWorkflowState();
+        loadFileTree(scanRoot);
+        showToast(`AI匹配完成: ${data.llm_matched}项新增匹配 (共消耗${data.usage.total_tokens || 0} tokens)`, "success");
+        return true;
+    } catch (err) {
+        showToast("AI匹配失败: " + err.message, "error");
+        return false;
+    } finally {
+        statusEl.classList.add("hidden");
+        matchBtn.disabled = false;
+        matchBtn.style.opacity = "1";
+    }
+}
+
+function initLlmPanel() {
+    const enabled = document.getElementById("llm-enabled");
+    const modal = document.getElementById("llm-config-modal");
+    const summary = document.getElementById("llm-config-summary");
+    const tag = document.getElementById("llm-config-tag");
+    const provider = document.getElementById("llm-provider");
+    const apiKeyInput = document.getElementById("llm-api-key");
+    const baseUrlInput = document.getElementById("llm-base-url");
+    const hint = document.getElementById("llm-base-url-hint");
+    const cancelBtn = document.getElementById("llm-cancel-btn");
+    const saveBtn = document.getElementById("llm-save-btn");
+
+    function updateBaseUrlHint() {
+        const preset = LLM_PRESETS[provider.value];
+        if (preset) {
+            baseUrlInput.placeholder = preset.base_url;
+            hint.textContent = provider.value === "ollama" ? "请确认 Ollama 已启动" : "留空则使用默认地址";
+        }
+    }
+
+    function loadForm() {
+        provider.value = localStorage.getItem("llm_provider") || "deepseek";
+        apiKeyInput.value = localStorage.getItem("llm_api_key") || "";
+        baseUrlInput.value = localStorage.getItem("llm_base_url") || "";
+        updateBaseUrlHint();
+    }
+
+    function closeModal() {
+        modal.classList.add("hidden");
+        if (localStorage.getItem("llm_configured") !== "true") {
+            enabled.checked = false;
+            summary.classList.add("hidden");
+        }
+    }
+
+    function saveConfig() {
+        const providerVal = provider.value;
+        const apiKey = apiKeyInput.value.trim();
+        const baseUrl = baseUrlInput.value.trim();
+
+        if (providerVal !== "ollama" && !apiKey) {
+            showToast("请输入API Key", "error");
+            return;
+        }
+
+        localStorage.setItem("llm_provider", providerVal);
+        localStorage.setItem("llm_api_key", apiKey);
+        localStorage.setItem("llm_base_url", baseUrl);
+        localStorage.setItem("llm_configured", "true");
+        summary.classList.remove("hidden");
+        enabled.checked = true;
+        modal.classList.add("hidden");
+        showToast("AI配置已保存", "success");
+    }
+
+    enabled.addEventListener("change", () => {
+        if (enabled.checked) {
+            loadForm();
+            modal.classList.remove("hidden");
+        }
+    });
+    tag.addEventListener("click", () => {
+        loadForm();
+        modal.classList.remove("hidden");
+    });
+    provider.addEventListener("change", updateBaseUrlHint);
+    cancelBtn.addEventListener("click", closeModal);
+    saveBtn.addEventListener("click", saveConfig);
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    updateBaseUrlHint();
+    if (localStorage.getItem("llm_configured") === "true") {
+        enabled.checked = true;
+        summary.classList.remove("hidden");
+        loadForm();
+    } else {
+        enabled.checked = false;
+        summary.classList.add("hidden");
+    }
+}
+
+async function runLlmMatch() {
+    if (!matchResults) { showToast("请先执行规则匹配", "error"); return false; }
+
+    const hasUnmatched = matchResults.some((r) => r.status === "未获取");
+    if (!hasUnmatched) { showToast("规则匹配已完成，暂无需AI辅助", "success"); return true; }
+
+    if (localStorage.getItem("llm_configured") !== "true") {
+        showToast("请先配置AI辅助匹配", "error");
+        document.getElementById("llm-config-modal").classList.remove("hidden");
+        return false;
+    }
+
+    const provider = localStorage.getItem("llm_provider") || "deepseek";
+    const apiKey = localStorage.getItem("llm_api_key") || "";
+    const baseUrl = localStorage.getItem("llm_base_url") || "";
+
+    if (provider !== "ollama" && !apiKey) {
+        showToast("请先配置AI辅助匹配", "error");
+        document.getElementById("llm-config-modal").classList.remove("hidden");
+        return false;
+    }
+
+    const statusEl = document.getElementById("llm-status");
+    const matchBtn = document.getElementById("match-btn");
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "正在AI匹配中，请稍候...";
+    matchBtn.disabled = true;
+    matchBtn.style.opacity = "0.6";
+
+    try {
+        const r = await fetch(API.llmMatch, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, api_key: apiKey, base_url: baseUrl }),
+        });
+        const data = await r.json();
+        if (data.error) { showToast(data.error, "error"); return false; }
+        if (data.match_results) {
+            matchResults = data.match_results;
+        }
+        renderMainTable();
+        updateStats(data.matched_count, data.total);
+        updateWorkflowState();
+        loadFileTree(scanRoot);
+        showToast(`AI匹配完成: ${data.llm_matched}项新增匹配 (共消耗${data.usage.total_tokens || 0} tokens)`, "success");
+        return true;
+    } catch (err) {
+        showToast("AI匹配失败: " + err.message, "error");
+        return false;
+    } finally {
+        statusEl.classList.add("hidden");
+        matchBtn.disabled = false;
+        matchBtn.style.opacity = "1";
+    }
 }
 
 // ====== 提示消息 ======
 
 function showToast(message, type) {
     const toast = document.getElementById("toast");
-    toast.textContent = message;
+    const icon = type === "success" ? "✓" : "!";
+    toast.textContent = `${icon} ${message}`;
     toast.className = "toast " + type + " show";
     setTimeout(() => toast.classList.remove("show"), 3000);
 }

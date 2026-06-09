@@ -235,6 +235,18 @@ def get_matched_paths():
     return matched
 
 
+def find_path_assignment(file_path, exclude_index=None):
+    """查找某个路径当前分配到了哪一行"""
+    if not state["match_results"]:
+        return None
+    for r in state["match_results"]:
+        if exclude_index is not None and r["index"] == exclude_index:
+            continue
+        if file_path in r["matched_files"]:
+            return r["index"]
+    return None
+
+
 @app.route("/api/folder-tree", methods=["GET"])
 def folder_tree():
     """返回指定文件夹的直接子项，标注是否已匹配"""
@@ -275,13 +287,18 @@ def manual_match():
     if not state["match_results"]:
         return jsonify({"error": "尚无匹配结果"}), 400
 
+    assigned_index = find_path_assignment(file_path, exclude_index=index)
+    if assigned_index is not None:
+        return jsonify({"error": f"该资料已分配给第{assigned_index}项，不能重复分配"}), 400
+
     for r in state["match_results"]:
         if r["index"] == index:
-            r["status"] = "已获取"
-            r["matched_files"].append(file_path)
-            r["matched_names"].append(os.path.basename(file_path))
-            r["matched_types"].append("文件夹" if os.path.isdir(file_path) else "文件")
-            r["match_count"] = len(r["matched_files"])
+            if file_path not in r["matched_files"]:
+                r["status"] = "已获取"
+                r["matched_files"].append(file_path)
+                r["matched_names"].append(os.path.basename(file_path))
+                r["matched_types"].append("文件夹" if os.path.isdir(file_path) else "文件")
+                r["match_count"] = len(r["matched_files"])
             break
 
     matched_count = sum(1 for r in state["match_results"] if r["status"] in ("已获取", "部分获取"))
@@ -388,6 +405,7 @@ def do_llm_match():
             llm_map[item["index"]] = item
 
     updated_count = 0
+    used_paths = get_matched_paths()
     for r in state["match_results"]:
         if r["index"] in llm_map:
             llm_item = llm_map[r["index"]]
@@ -399,13 +417,14 @@ def do_llm_match():
                 if _os.path.basename(p) == matched_name:
                     matched_path = p
                     break
-            if matched_path:
+            if matched_path and matched_path not in used_paths:
                 r["status"] = "已获取"
                 r["matched_files"] = [matched_path]
                 r["matched_names"] = [matched_name]
                 r["matched_types"] = ["文件夹" if _os.path.isdir(matched_path) else "文件"]
                 r["match_count"] = len(r["matched_files"])
                 r["llm_confidence"] = llm_item["confidence"]
+                used_paths.add(matched_path)
                 updated_count += 1
 
     matched_count = sum(1 for r in state["match_results"] if r["status"] in ("已获取", "部分获取"))

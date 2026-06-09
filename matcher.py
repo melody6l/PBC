@@ -75,14 +75,18 @@ def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy"):
     results = []
     match_func = exact_match if mode == "exact" else fuzzy_match
 
+    used_paths = set()
+
     for i, item in enumerate(checklist_items):
         checklist_name = item if isinstance(item, str) else str(item)
         matched = match_func(checklist_name, scanned_files, scanned_folders)
+        matched = [path for path in matched if path not in used_paths]
         status = "已获取" if matched else "未获取"
         matched_names = [os.path.basename(f) for f in matched]
         matched_types = []
         for path in matched:
             matched_types.append("文件夹" if os.path.isdir(path) else "文件")
+            used_paths.add(path)
         results.append({
             "index": i + 1,
             "checklist_name": checklist_name,
