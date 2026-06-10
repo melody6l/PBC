@@ -80,6 +80,10 @@
                             <input type="checkbox" id="llm-enabled">
                             <span>AI辅助匹配（可选）</span>
                         </label>
+                        <label class="match-option hidden" id="incremental-match-wrap">
+                            <input type="checkbox" id="incremental-match" checked>
+                            <span>增量匹配（保留已获取项）</span>
+                        </label>
                     </div>
                     <div class="llm-config-summary hidden" id="llm-config-summary">
                         <span class="llm-config-tag" id="llm-config-tag" title="点击修改配置">已配置</span>
@@ -116,6 +120,14 @@
                 <div class="stat-value" id="stat-missing">0</div>
                 <div class="stat-label">未获取</div>
             </div>
+        </div>
+
+        <div class="panel hidden" id="diff-section">
+            <div class="panel-title">
+                <span>更新对比</span>
+                <span class="badge" id="diff-badge">本次扫描</span>
+            </div>
+            <div id="diff-content"></div>
         </div>
 
         <!-- 分屏：左侧清单表格 + 右侧文件树 -->

@@ -5,7 +5,7 @@ import json
 import urllib.parse
 from flask import Flask, request, jsonify, render_template, send_file, make_response
 from matcher import match_files
-from excel_handler import read_checklist, export_results
+from excel_handler import normalize_item_name, read_checklist, export_results
 from llm_matcher import llm_match
 
 app = Flask(__name__)
@@ -19,7 +19,91 @@ state = {
     "scanned_folders": None, # 扫描到的文件夹列表
     "match_results": None,   # 匹配结果
     "match_mode": "fuzzy",   # 当前匹配模式
+    "scan_root": None,       # 当前扫描根目录
+    "new_items": [],
+    "existing_items": [],
+    "previous_scanned_files": [],
+    "previous_scanned_folders": [],
 }
+
+
+def scan_all(folder_path):
+    """扫描文件夹，返回文件和文件夹路径列表。"""
+    scanned_files = []
+    scanned_folders = []
+    for root, dirs, files in os.walk(folder_path):
+        for d in dirs:
+            if not d.startswith(".") and not d.startswith("~"):
+                scanned_folders.append(os.path.join(root, d))
+        for f in files:
+            if not f.startswith(".") and not f.startswith("~"):
+                scanned_files.append(os.path.join(root, f))
+    return scanned_files, scanned_folders
+
+
+def calculate_diff(prev_files, new_files, prev_folders, new_folders):
+    """计算前后扫描结果差异。"""
+    if prev_files is None and prev_folders is None:
+        return {"mode": "full_scan"}
+
+    prev_files_set = set(prev_files or [])
+    new_files_set = set(new_files or [])
+    prev_folders_set = set(prev_folders or [])
+    new_folders_set = set(new_folders or [])
+    return {
+        "mode": "incremental",
+        "added_files": sorted(new_files_set - prev_files_set),
+        "removed_files": sorted(prev_files_set - new_files_set),
+        "added_folders": sorted(new_folders_set - prev_folders_set),
+        "removed_folders": sorted(prev_folders_set - new_folders_set),
+        "total_added": len(new_files_set - prev_files_set) + len(new_folders_set - prev_folders_set),
+        "total_removed": len(prev_files_set - new_files_set) + len(prev_folders_set - new_folders_set),
+    }
+
+
+def build_history_results(checklist):
+    """从导入的历史清单重建前端可展示的匹配结果。"""
+    results = []
+    for i, item in enumerate(checklist.get("items", []), 1):
+        matched_files = item.get("matched_files", []) or []
+        matched_names = item.get("matched_names", []) or [os.path.basename(p) for p in matched_files]
+        matched_types = item.get("matched_types", []) or [
+            "文件夹" if os.path.isdir(p) else "文件" for p in matched_files
+        ]
+        results.append({
+            "index": i,
+            "checklist_name": item.get("name", ""),
+            "row_uid": item.get("row_uid", ""),
+            "source_key": item.get("source_key", normalize_item_name(item.get("name", ""))),
+            "status": item.get("status", "未获取"),
+            "matched_files": matched_files,
+            "matched_names": matched_names,
+            "matched_types": matched_types,
+            "match_count": len(matched_files),
+            "required_count": 1,
+        })
+    return results
+
+
+def result_counts(results):
+    matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
+    partial_count = sum(1 for r in results if r["status"] == "部分获取")
+    return matched_count, partial_count
+
+
+def reset_state_values():
+    state.update({
+        "checklist": None,
+        "scanned_files": None,
+        "scanned_folders": None,
+        "match_results": None,
+        "match_mode": "fuzzy",
+        "scan_root": None,
+        "new_items": [],
+        "existing_items": [],
+        "previous_scanned_files": [],
+        "previous_scanned_folders": [],
+    })
 
 
 @app.route("/")
@@ -44,7 +128,11 @@ def upload_checklist():
     try:
         checklist = read_checklist(save_path)
         state["checklist"] = checklist
-        state["match_results"] = None  # 清除旧匹配结果
+        state["new_items"] = checklist.get("new_items", [])
+        state["existing_items"] = checklist.get("existing_items", [])
+        state["previous_scanned_files"] = checklist.get("prev_scanned_files", [])
+        state["previous_scanned_folders"] = checklist.get("prev_scanned_folders", [])
+        state["match_results"] = build_history_results(checklist) if checklist.get("has_previous_results") else None
         return jsonify({
             "success": True,
             "headers": checklist["headers"],
@@ -52,6 +140,10 @@ def upload_checklist():
             "items": checklist["items"],
             "name_col_index": checklist["name_col_index"],
             "total": len(checklist["items"]),
+            "has_previous_results": checklist.get("has_previous_results", False),
+            "new_count": len(state["new_items"]),
+            "existing_count": len(state["existing_items"]),
+            "results": state["match_results"] or [],
         })
     except Exception as e:
         return jsonify({"error": f"读取Excel失败: {str(e)}"}), 500
@@ -65,19 +157,13 @@ def scan_folder():
     if not folder_path or not os.path.isdir(folder_path):
         return jsonify({"error": "文件夹路径无效"}), 400
 
-    scanned_files = []
-    scanned_folders = []
-    for root, dirs, files in os.walk(folder_path):
-        for d in dirs:
-            # 排除隐藏文件夹和系统文件夹
-            if not d.startswith(".") and not d.startswith("~"):
-                full_path = os.path.join(root, d)
-                scanned_folders.append(full_path)
-        for f in files:
-            # 排除隐藏文件和系统文件
-            if not f.startswith(".") and not f.startswith("~"):
-                full_path = os.path.join(root, f)
-                scanned_files.append(full_path)
+    prev_files = state.get("scanned_files")
+    prev_folders = state.get("scanned_folders")
+    if prev_files is None and prev_folders is None:
+        prev_files = state.get("previous_scanned_files") or None
+        prev_folders = state.get("previous_scanned_folders") or None
+    scanned_files, scanned_folders = scan_all(folder_path)
+    diff = calculate_diff(prev_files, scanned_files, prev_folders, scanned_folders)
 
     state["scanned_files"] = scanned_files
     state["scanned_folders"] = scanned_folders
@@ -85,18 +171,24 @@ def scan_folder():
     state["scan_root"] = folder_path
     # 自动执行匹配
     if state["checklist"]:
+        prev_results = state.get("match_results") if state["checklist"].get("has_previous_results") else None
         results = match_files(
             state["checklist"]["items"],
             scanned_files,
             scanned_folders,
             mode=state["match_mode"],
+            prev_results=prev_results,
         )
         state["match_results"] = results
-        matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
-        partial_count = sum(1 for r in results if r["status"] == "部分获取")
+        matched_count, partial_count = result_counts(results)
         return jsonify({
             "success": True,
             "scanned_count": len(scanned_files) + len(scanned_folders),
+            "diff": diff,
+            "checklist_diff": {
+                "new_count": len(state.get("new_items", [])),
+                "existing_count": len(state.get("existing_items", [])),
+            },
             "results": results,
             "matched_count": matched_count,
             "partial_count": partial_count,
@@ -107,6 +199,7 @@ def scan_folder():
         return jsonify({
             "success": True,
             "scanned_count": len(scanned_files) + len(scanned_folders),
+            "diff": diff,
             "results": [],
             "message": "请先上传清单文件再执行匹配",
         })
@@ -117,22 +210,24 @@ def do_match():
     """执行匹配（可切换匹配模式）"""
     data = request.get_json()
     mode = data.get("mode", "fuzzy")
+    incremental = data.get("incremental", False)
     state["match_mode"] = mode
 
     if not state["checklist"]:
         return jsonify({"error": "请先上传清单文件"}), 400
-    if not state["scanned_files"]:
+    if not state["scanned_files"] and not state.get("scanned_folders"):
         return jsonify({"error": "请先扫描目标文件夹"}), 400
 
+    prev_results = state.get("match_results") if incremental and state["checklist"].get("has_previous_results") else None
     results = match_files(
         state["checklist"]["items"],
         state["scanned_files"],
         state.get("scanned_folders", []),
         mode=mode,
+        prev_results=prev_results,
     )
     state["match_results"] = results
-    matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
-    partial_count = sum(1 for r in results if r["status"] == "部分获取")
+    matched_count, partial_count = result_counts(results)
     return jsonify({
         "success": True,
         "results": results,
@@ -160,7 +255,12 @@ def set_name_column():
         if row and len(row) > name_col_index:
             name = row[name_col_index]
             if name and str(name).strip():
-                items.append(str(name).strip())
+                item_name = str(name).strip()
+                items.append({
+                    "name": item_name,
+                    "source_key": normalize_item_name(item_name),
+                    "row_uid": "",
+                })
 
     checklist["name_col_index"] = name_col_index
     checklist["items"] = items
@@ -174,8 +274,7 @@ def set_name_column():
     if state["scanned_files"]:
         results = match_files(items, state["scanned_files"], state.get("scanned_folders", []), mode=state["match_mode"])
         state["match_results"] = results
-        matched_count = sum(1 for r in results if r["status"] in ("已获取", "部分获取"))
-        partial_count = sum(1 for r in results if r["status"] == "部分获取")
+        matched_count, partial_count = result_counts(results)
 
     return jsonify({
         "success": True,
@@ -223,6 +322,13 @@ def update_status():
             })
 
     return jsonify({"error": "未找到指定序号"}), 400
+
+
+@app.route("/api/reset-state", methods=["POST"])
+def reset_state():
+    """重置所有状态，重新开始。"""
+    reset_state_values()
+    return jsonify({"success": True})
 
 
 def get_matched_paths():
@@ -352,6 +458,9 @@ def export_excel():
         headers=checklist.get("headers", []),
         data=checklist.get("data", []),
         name_col_index=checklist.get("name_col_index", 0),
+        scan_root=state.get("scan_root", "") or "",
+        scanned_files=state.get("scanned_files") or [],
+        scanned_folders=state.get("scanned_folders") or [],
     )
     return send_file(output_path, as_attachment=True, download_name="文件核对结果.xlsx")
 
@@ -374,7 +483,7 @@ def do_llm_match():
     # 收集未匹配项
     unmatched_items = []
     for r in state["match_results"]:
-        if r["status"] == "未获取":
+        if r["status"] in ("未获取", "待匹配"):
             unmatched_items.append({"index": r["index"], "name": r["checklist_name"]})
 
     if not unmatched_items:

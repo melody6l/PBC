@@ -1,10 +1,19 @@
 """Excel 读写处理 - 读取清单文件、导出匹配结果。"""
 
+import json
 import os
+import uuid
 
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+META_HEADERS = {"row_uid", "source_key"}
+
+
+def normalize_item_name(name):
+    """归一化清单项名称，用于兼容旧版历史结果。"""
+    return str(name).strip().replace("　", " ").lower()
 
 
 def find_name_column(headers):
@@ -16,7 +25,26 @@ def find_name_column(headers):
                 if kw in header:
                     return i
     # 默认返回第二列，通常序号在第一列，名称在第二列
-    return 1 if len(headers) > 1 else 0
+    visible_headers = [h for h in headers if h not in META_HEADERS]
+    return 1 if len(visible_headers) > 1 else 0
+
+
+def extract_path_from_link(cell):
+    """从超链接单元格提取本地路径。"""
+    target = cell.hyperlink.target if cell.hyperlink else cell.value
+    if not target:
+        return None
+    target = str(target)
+    if target.startswith("file:///"):
+        return target[8:].replace("/", "\\")
+    return None
+
+
+def _column_index(headers, keyword):
+    for i, header in enumerate(headers):
+        if header and keyword in str(header):
+            return i
+    return None
 
 
 def read_checklist(file_path):
@@ -25,33 +53,140 @@ def read_checklist(file_path):
     ws = wb.active
 
     rows = []
-    for row in ws.iter_rows(values_only=True):
-        rows.append(list(row))
+    hyperlink_rows = []
+    for row in ws.iter_rows():
+        rows.append([cell.value for cell in row])
+        hyperlink_rows.append([extract_path_from_link(cell) for cell in row])
 
     if not rows:
-        return {"headers": [], "data": [], "name_col_index": 0, "items": []}
+        return {
+            "headers": [],
+            "data": [],
+            "name_col_index": 0,
+            "items": [],
+            "history": {},
+            "has_previous_results": False,
+            "new_items": [],
+            "existing_items": [],
+            "prev_scanned_files": [],
+            "prev_scanned_folders": [],
+        }
 
-    headers = rows[0]
+    raw_headers = [str(h) if h else "" for h in rows[0]]
+    generated_cols = {"核对结果", "文件超链接"}
+    excluded_cols = {i for i, h in enumerate(raw_headers) if h in META_HEADERS or h in generated_cols}
+    headers = [h for i, h in enumerate(raw_headers) if i not in excluded_cols]
     data = rows[1:]
+    clean_data = [[cell for i, cell in enumerate(row) if i not in excluded_cols] for row in data]
     name_col_index = find_name_column(headers)
 
+    status_col = _column_index(raw_headers, "核对结果")
+    link_col = _column_index(raw_headers, "超链接")
+    uid_col = raw_headers.index("row_uid") if "row_uid" in raw_headers else None
+    source_key_col = raw_headers.index("source_key") if "source_key" in raw_headers else None
+    prev_scanned_files = []
+    prev_scanned_folders = []
+    if "_pbc_meta" in wb.sheetnames:
+        meta_ws = wb["_pbc_meta"]
+        for row in meta_ws.iter_rows(values_only=True):
+            if not row or len(row) < 2:
+                continue
+            if row[0] == "scanned_file":
+                prev_scanned_files.append(str(row[1]))
+            elif row[0] == "scanned_folder":
+                prev_scanned_folders.append(str(row[1]))
+
+    history = {}
+    last_key = None
+    for row_idx, row in enumerate(data):
+        if not row:
+            continue
+        name = row[name_col_index] if len(row) > name_col_index else ""
+        uid = row[uid_col] if uid_col is not None and len(row) > uid_col else ""
+        source_key = row[source_key_col] if source_key_col is not None and len(row) > source_key_col else ""
+        if name:
+            status = row[status_col] if status_col is not None and len(row) > status_col else ""
+            has_history_marker = bool(status or uid or source_key)
+            if not has_history_marker:
+                last_key = None
+                continue
+            source_key = str(source_key).strip() if source_key else normalize_item_name(name)
+            key = str(uid).strip() if uid else source_key
+            last_key = key
+            if key not in history:
+                history[key] = {
+                    "row_uid": str(uid).strip() if uid else "",
+                    "source_key": source_key,
+                    "status": str(status).strip() if status else "未获取",
+                    "matched_files": [],
+                    "matched_names": [],
+                    "matched_types": [],
+                }
+        elif last_key:
+            key = last_key
+        else:
+            continue
+
+        if link_col is not None and len(hyperlink_rows[row_idx + 1]) > link_col:
+            matched_path = hyperlink_rows[row_idx + 1][link_col]
+            if matched_path and matched_path not in history[key]["matched_files"]:
+                history[key]["matched_files"].append(matched_path)
+                history[key]["matched_names"].append(os.path.basename(matched_path))
+                history[key]["matched_types"].append("文件夹" if os.path.isdir(matched_path) else "文件")
+
     items = []
-    for row in data:
+    existing_items = []
+    new_items = []
+    for row_idx, row in enumerate(data):
         if row and len(row) > name_col_index:
             name = row[name_col_index]
             if name and str(name).strip():
-                items.append(str(name).strip())
+                source_key = normalize_item_name(name)
+                uid = row[uid_col] if uid_col is not None and len(row) > uid_col else ""
+                item = {
+                    "name": str(name).strip(),
+                    "source_key": str(row[source_key_col]).strip() if source_key_col is not None and len(row) > source_key_col and row[source_key_col] else source_key,
+                    "row_uid": str(uid).strip() if uid else "",
+                    "row_index": row_idx + 1,
+                }
+                key = item["row_uid"] or item["source_key"]
+                history_item = history.get(key) or history.get(item["source_key"])
+                if history_item and history_item.get("status"):
+                    item.update({
+                        "status": history_item["status"],
+                        "matched_files": history_item["matched_files"],
+                        "matched_names": history_item["matched_names"],
+                        "matched_types": history_item["matched_types"],
+                        "need_match": history_item["status"] in ("未获取", "部分获取", "待匹配"),
+                    })
+                    existing_items.append(item)
+                else:
+                    item.update({
+                        "status": "待匹配" if history else "未获取",
+                        "matched_files": [],
+                        "matched_names": [],
+                        "matched_types": [],
+                        "need_match": True,
+                    })
+                    new_items.append(item)
+                items.append(item)
 
     wb.close()
     return {
-        "headers": [str(h) if h else "" for h in headers],
-        "data": [[str(cell) if cell else "" for cell in row] for row in data],
+        "headers": headers,
+        "data": [[str(cell) if cell else "" for cell in row] for row in clean_data],
         "name_col_index": name_col_index,
         "items": items,
+        "history": history,
+        "has_previous_results": len(history) > 0,
+        "new_items": new_items,
+        "existing_items": existing_items,
+        "prev_scanned_files": prev_scanned_files,
+        "prev_scanned_folders": prev_scanned_folders,
     }
 
 
-def export_results(results, headers, data, name_col_index):
+def export_results(results, headers, data, name_col_index, scan_root="", scanned_files=None, scanned_folders=None):
     """将匹配结果导出为 Excel 文件。"""
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -74,7 +209,7 @@ def export_results(results, headers, data, name_col_index):
         if header_val or has_data:
             valid_cols.append(col_idx)
 
-    col_headers = [headers[c] for c in valid_cols] + ["核对结果", "文件超链接"]
+    col_headers = [headers[c] for c in valid_cols] + ["核对结果", "文件超链接", "row_uid", "source_key"]
     for i, h in enumerate(col_headers, 1):
         cell = ws.cell(row=1, column=i, value=h)
         cell.fill = header_fill
@@ -96,6 +231,8 @@ def export_results(results, headers, data, name_col_index):
         matched_files = result.get("matched_files", []) or []
         matched_names = result.get("matched_names", []) or []
         n_rows = max(1, len(matched_files))
+        row_uid = result.get("row_uid") or str(uuid.uuid4())
+        source_key = result.get("source_key") or normalize_item_name(checklist_name)
 
         start_row = row_idx
         end_row = row_idx + n_rows - 1
@@ -133,6 +270,11 @@ def export_results(results, headers, data, name_col_index):
                 link_cell.font = Font(color="0563C1", underline="single")
                 link_cell.alignment = Alignment(vertical="center")
 
+            uid_col = len(valid_cols) + 3
+            key_col = len(valid_cols) + 4
+            ws.cell(row=current_row, column=uid_col, value=row_uid if sub_idx == 0 else "")
+            ws.cell(row=current_row, column=key_col, value=source_key if sub_idx == 0 else "")
+
         if n_rows > 1:
             # 原始列纵向合并
             for col_num in range(1, len(valid_cols) + 1):
@@ -157,6 +299,25 @@ def export_results(results, headers, data, name_col_index):
             status_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         row_idx += n_rows
+
+    ws.column_dimensions[get_column_letter(len(valid_cols) + 3)].hidden = True
+    ws.column_dimensions[get_column_letter(len(valid_cols) + 4)].hidden = True
+
+    meta_ws = wb.create_sheet("_pbc_meta")
+    meta_ws.sheet_state = "hidden"
+    meta_ws.append(["scan_root", scan_root])
+    meta_ws.append(["result_count", len(results)])
+    for path in scanned_files or []:
+        meta_ws.append(["scanned_file", path])
+    for path in scanned_folders or []:
+        meta_ws.append(["scanned_folder", path])
+    for result in results:
+        meta_ws.append([
+            result.get("row_uid", ""),
+            result.get("source_key", ""),
+            result.get("status", ""),
+            json.dumps(result.get("matched_files", []), ensure_ascii=False),
+        ])
 
     # 设置列宽
     for i in range(1, len(col_headers) + 1):

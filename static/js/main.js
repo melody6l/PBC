@@ -11,6 +11,7 @@ const API = {
     export: "/api/export",
     llmMatch: "/api/llm-match",
     browseDirs: "/api/browse-dirs",
+    resetState: "/api/reset-state",
 };
 
 // 全局状态
@@ -119,13 +120,18 @@ function handleFileUpload(file) {
         .then((data) => {
             if (data.error) { showToast(data.error, "error"); return; }
             checklistData = data;
-            matchResults = null;
+            matchResults = data.results && data.results.length ? data.results : null;
             document.getElementById("stats-section").classList.add("hidden");
+            document.getElementById("diff-section").classList.add("hidden");
             document.getElementById("progress-fill").style.width = "0%";
-            document.getElementById("export-btn").classList.add("hidden");
+            document.getElementById("export-btn").classList.toggle("hidden", !matchResults);
             updateUploadUI(file.name, data);
             populateNameColSelect(data);
             renderMainTable();
+            renderMatchOptions();
+            if (matchResults) {
+                updateStatsFromResults(matchResults);
+            }
             updateWorkflowState();
             showToast(`清单已加载，共 ${data.total} 项`, "success");
         })
@@ -211,6 +217,7 @@ function scanFolder() {
             scannedCount = data.scanned_count;
             scanRoot = data.root_path || folderPath;
             document.getElementById("folder-badge").textContent = `✓ ${data.scanned_count}个文件`;
+            renderScanDiff(data.diff);
             if (data.results && data.results.length) {
                 matchResults = data.results;
                 renderMainTable();
@@ -233,22 +240,34 @@ function initMatchControls() {
     document.getElementById("export-btn").addEventListener("click", () => exportExcel());
 }
 
+function renderMatchOptions() {
+    const wrap = document.getElementById("incremental-match-wrap");
+    if (!wrap) return;
+    wrap.classList.toggle("hidden", !(checklistData && checklistData.has_previous_results));
+}
+
 async function doMatch() {
     const mode = document.getElementById("match-mode").value;
+    const incremental = Boolean(
+        checklistData &&
+        checklistData.has_previous_results &&
+        document.getElementById("incremental-match") &&
+        document.getElementById("incremental-match").checked
+    );
     if (!checklistData) { showToast("请先上传清单文件", "error"); return; }
     if (!scannedCount) { showToast("请先扫描目标文件夹", "error"); return; }
 
     try {
         const r = await fetch(API.match, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode }),
+            body: JSON.stringify({ mode, incremental }),
         });
         const data = await r.json();
         if (data.error) { showToast(data.error, "error"); return; }
         matchResults = data.results;
         scanRoot = data.root_path || scanRoot;
         renderMainTable();
-        updateStats(data.matched_count, data.total);
+        updateStats(data.matched_count, data.total, data.partial_count);
         document.getElementById("export-btn").classList.remove("hidden");
         loadFileTree(scanRoot);
         updateWorkflowState();
@@ -408,6 +427,38 @@ function updateStats(matched, total, partial) {
     document.getElementById("progress-fill").style.width = percent + "%";
 }
 
+function updateStatsFromResults(results) {
+    const matched = results.filter((r) => r.status === "已获取" || r.status === "部分获取").length;
+    const partial = results.filter((r) => r.status === "部分获取").length;
+    updateStats(matched, results.length, partial);
+}
+
+function renderScanDiff(diff) {
+    const section = document.getElementById("diff-section");
+    const content = document.getElementById("diff-content");
+    if (!section || !content || !diff || diff.mode !== "incremental") {
+        if (section) section.classList.add("hidden");
+        return;
+    }
+
+    const added = diff.total_added || 0;
+    const removed = diff.total_removed || 0;
+    const addedFiles = (diff.added_files || []).slice(0, 8).map((p) => p.split(/[\\/]/).pop());
+    const removedFiles = (diff.removed_files || []).slice(0, 8).map((p) => p.split(/[\\/]/).pop());
+    let html = `<div class="diff-line">新增 ${added} 项，删除 ${removed} 项</div>`;
+    if (addedFiles.length) {
+        html += `<div class="diff-list"><strong>新增文件:</strong> ${addedFiles.join("、")}</div>`;
+    }
+    if (removedFiles.length) {
+        html += `<div class="diff-list"><strong>删除文件:</strong> ${removedFiles.join("、")}</div>`;
+    }
+    if (!added && !removed) {
+        html += `<div class="diff-list">文件列表没有变化</div>`;
+    }
+    content.innerHTML = html;
+    section.classList.remove("hidden");
+}
+
 function updateWorkflowState() {
     const hasChecklist = Boolean(checklistData);
     const hasScannedFolder = scannedCount > 0;
@@ -417,6 +468,7 @@ function updateWorkflowState() {
     setWorkflowStep("workflow-step-2", hasScannedFolder ? "completed" : (hasChecklist ? "active" : "pending"));
     setWorkflowStep("workflow-step-3", hasMatchResult ? "completed" : (hasScannedFolder ? "active" : "pending"));
     document.getElementById("name-col-selector").classList.toggle("hidden", !hasChecklist);
+    renderMatchOptions();
 
     document.getElementById("match-badge").textContent = hasMatchResult ? "✓ 已完成" : (hasScannedFolder ? "待匹配" : "待前置");
 

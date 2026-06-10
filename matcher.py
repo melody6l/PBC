@@ -3,6 +3,8 @@
 import os
 import re
 
+from excel_handler import normalize_item_name
+
 
 def extract_keywords(name):
     """从文件名中提取核心关键词，去除序号、特殊字符等"""
@@ -53,7 +55,28 @@ def fuzzy_match(checklist_name, scanned_files, scanned_folders):
     return matches
 
 
-def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy"):
+def _item_name(item):
+    if isinstance(item, dict):
+        return item.get("name") or item.get("checklist_name") or ""
+    return str(item)
+
+
+def _item_key(item):
+    if isinstance(item, dict):
+        return item.get("row_uid") or item.get("source_key") or normalize_item_name(_item_name(item))
+    return normalize_item_name(_item_name(item))
+
+
+def _history_lookup(prev_results):
+    lookup = {}
+    for result in prev_results or []:
+        key = _item_key(result)
+        if key:
+            lookup[key] = result
+    return lookup
+
+
+def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy", prev_results=None):
     """
     对清单中的每一项执行匹配（同时匹配文件和文件夹）
 
@@ -75,10 +98,24 @@ def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy"):
     results = []
     match_func = exact_match if mode == "exact" else fuzzy_match
 
+    history = _history_lookup(prev_results)
     used_paths = set()
+    for result in history.values():
+        if result.get("status") == "已获取":
+            for path in result.get("matched_files", []) or []:
+                used_paths.add(path)
 
     for i, item in enumerate(checklist_items):
-        checklist_name = item if isinstance(item, str) else str(item)
+        checklist_name = _item_name(item)
+        item_key = _item_key(item)
+        prev_result = history.get(item_key)
+
+        if prev_result and prev_result.get("status") == "已获取":
+            kept = dict(prev_result)
+            kept["index"] = i + 1
+            results.append(kept)
+            continue
+
         matched = match_func(checklist_name, scanned_files, scanned_folders)
         matched = [path for path in matched if path not in used_paths]
         status = "已获取" if matched else "未获取"
@@ -90,6 +127,8 @@ def match_files(checklist_items, scanned_files, scanned_folders, mode="fuzzy"):
         results.append({
             "index": i + 1,
             "checklist_name": checklist_name,
+            "row_uid": item.get("row_uid", "") if isinstance(item, dict) else "",
+            "source_key": item.get("source_key", normalize_item_name(checklist_name)) if isinstance(item, dict) else normalize_item_name(checklist_name),
             "status": status,
             "matched_files": matched,
             "matched_names": matched_names,
